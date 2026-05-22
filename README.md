@@ -171,10 +171,11 @@ lovable-followup-agent/
 | Phase | 시점 | 내용 |
 |---|---|---|
 | **Phase 0** | 2026-05-22 ~ 2026-05-23 | 요구사항·설계 확정. PRD/ARCHITECTURE/DECISIONS/README 작성. 핵심 의사결정 12건 정리. [kakao-sender (v2)](https://github.com/TurnaboutHero/kakao-sender-v2) 의 win32 HWND 주력 + UIA 보조 + 3중 방어 설계 차용. |
-| **Phase 1** | 예정 (M0~M1) | Anthropic Console 셋업(월 30,000원 상한 포함) + Notion DB 3개(Tasks/Whitelist/Inbox) 생성. |
-| **Phase 2** | 예정 (M2~M3) | AI 추출 PoC (Claude API로 4요소 추출 80%↑ 정확도). 카톡 발송 PoC (UIA + Step 추상화로 5회 연속 성공). |
-| **Phase 3** | 예정 (M4~M5) | 엔드투엔드 결선 (ingest → extract → notion → schedule → send). 안전장치 3종 적용 + 통합 테스트. |
-| **Phase 4** | 예정 (M6) | 실 운영 개시. 1개월 후 성공 지표 평가 (정확도·잘못 발송 0건·매니징 부담 정성평가·API 비용 ≤30,000원). |
+| **Phase 1** | 2026-05-23 ✅ | 코드 골조 완성: `pyproject.toml`(uv 기반) + `lovable_agent/` 패키지 트리 + `LLMClient` Protocol + `MockLLMClient` + `MockNotionRepository` + `main.py --dry-run`. 검증 4종 통과 — `uv sync` ✓ / `pytest 8 passed` ✓ / `ruff check` ✓ / `--dry-run` 한 사이클 정상 종료 ✓. 외부 호출 0건. |
+| **Phase 2** | 예정 | 카톡 자동화 검증 (가장 위험한 부분 우선). `scripts/investigate.py`로 본인 PC 카톡 HWND 트리 실측 → Step 단위 자동화 구현 → 테스트 톡방 5회 연속 발송 성공 + 3중 방어 차단 검증. PLAN §3.2. |
+| **Phase 3** | 예정 | 분석·저장 로직 구현 (mock 의존성으로 흐름 완성). 카톡 .txt 파서, Extractor, SQLite 저장소, 스케줄러, 6시간 룰, safety 모듈, Notifier. PLAN §3.3. |
+| **Phase 4** | 예정 | 외부 연결 — 처음으로 Anthropic API + Notion API 실호출. 회사 노션 정책 확인 → Integration 생성 → 3개 DB 생성 → mock → real 갈아끼움. PLAN §3.4. |
+| **Phase 5** | 예정 | 통합·안전장치·운영 시작. NFR-1 Sev-1 4종 검증 + Windows 작업 스케줄러 등록 + 1개월 운영 후 PRD §8 성공 지표 평가. PLAN §3.5. |
 
 각 Phase가 종료되는 시점에 본 표에 **완료 날짜**와 **실측 결과**를 채워 누적 기록한다.
 

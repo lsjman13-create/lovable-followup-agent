@@ -15,12 +15,12 @@
 
 ---
 
-## 1. 현재 상태 (Phase 0 완료)
+## 1. 현재 상태 (Phase 1 완료)
 
-- ✅ 요구사항·설계·결정 사항 문서화 (PRD/ARCHITECTURE/DECISIONS/README/이 문서)
-- ✅ 핵심 의사결정 12건 확정 (스코프·송수신 방식·AI 엔진·메시지 규칙·화이트리스트·중복판별·운영 4종 정책 등)
-- ✅ [kakao-sender (v2)](https://github.com/TurnaboutHero/kakao-sender-v2) 의 win32 HWND + UIA 보조 + 3중 방어 설계 차용
-- ⏳ 아직 안 한 것 — 코드 한 줄도 없음, 외부 계정 연결도 없음
+- ✅ Phase 0 — 요구사항·설계·결정 사항 문서화 (PRD/ARCHITECTURE/DECISIONS/README/PLAN)
+- ✅ Phase 0 — 핵심 의사결정 12건 + kakao-sender (v2) 설계 차용
+- ✅ **Phase 1 — 코드 골조 완성** (2026-05-23): pyproject.toml + 디렉터리 트리 + LLMClient Protocol + Mock 구현 + main.py --dry-run. pytest 8 passed, ruff·dry-run 통과.
+- ⏳ 다음 — Phase 2 (카톡 자동화 검증). 본인 PC 카톡 클라이언트 상태 점검 필요.
 
 ---
 
@@ -73,10 +73,10 @@
 - Python 3.11+ 설치, `uv` 설치
 
 **완료 기준**
-- [ ] `uv sync` 가 성공한다
-- [ ] `uv run pytest` 가 0개 테스트 통과로라도 끝난다 (에러 없이)
-- [ ] `uv run python -m lovable_agent --dry-run` 가 mock 의존성으로 끝까지 한 사이클 돌고 정상 종료한다
-- [ ] `ruff check` 통과
+- [x] `uv sync` 가 성공한다 *(2026-05-23, 36 패키지 + Python 3.14.3 자동 설치)*
+- [x] `uv run pytest` 가 0개 테스트 통과로라도 끝난다 (에러 없이) *(2026-05-23, **8 passed in 0.06s**)*
+- [x] `uv run python -m lovable_agent --dry-run` 가 mock 의존성으로 끝까지 한 사이클 돌고 정상 종료한다 *(2026-05-23)*
+- [x] `ruff check` 통과 *(2026-05-23)*
 
 **위험 / 주의**
 - 입문자가 처음 만나는 Python 패키지 레이아웃 — 한 번 잘 잡아두면 나머지가 편해짐, 여기서 시간 좀 써도 된다
@@ -263,15 +263,15 @@
 
 ## 6. "지금 당장 다음에 뭐 하지?" 체크리스트
 
-다음 한 주 안에 할 일.
+Phase 1 은 끝났다 (2026-05-23). 다음 한 주 안에 할 일은 **Phase 2 시작 준비**:
 
-- [ ] **Phase 1 시작**: `pyproject.toml` 작성 + `uv sync` 가 성공하는 상태까지
-- [ ] 프로젝트 루트에 `lovable_agent/`, `tests/`, `scripts/`, `docs/` 폴더 생성
-- [ ] `lovable_agent/__init__.py`, `lovable_agent/main.py` 빈 파일 생성
-- [ ] `pytest` 가 "0 passed" 로 통과하는 상태 확인
-- [ ] `LLMClient` Protocol 정의 (외부 의존성 없는 가장 단순한 파일부터)
+- [ ] 본인 PC 에 카카오톡 PC 클라이언트가 로그인된 상태 확인
+- [ ] 테스트용 톡방 확보 (가급적 "나와의 채팅" 으로 시작)
+- [ ] `scripts/investigate.py` 작성 → 본인 환경에서 카톡 HWND/UIA 트리 덤프
+- [ ] 덤프 결과를 `docs/investigation-result.md` 로 정리 (kakao-sender v2 의 `docs/investigation.md` 와 비교)
+- [ ] 본인 환경 값으로 `WindowSpec` 의 `class_name` / `expected_input_class` 기본값 확정
 
-Phase 1 끝났다는 신호 = "`uv run python -m lovable_agent --dry-run` 이 mock 의존성으로 한 사이클 돌고 끝남"
+Phase 2 끝났다는 신호 = "테스트 톡방에 `[AI 자동 팔로우업] 테스트` 5회 연속 발송 성공 + 잘못된 톡방명에서 3중 방어 차단 확인"
 
 ---
 
@@ -289,3 +289,4 @@ Phase 1 끝났다는 신호 = "`uv run python -m lovable_agent --dry-run` 이 mo
 | 날짜 | 변경 |
 |---|---|
 | 2026-05-23 | 초안 작성 (Phase 1~5). 외부 연결을 Phase 4로 미루는 새 순서 반영. |
+| 2026-05-23 | Phase 1 완료. 코드 골조·Mock 구현·검증 4종 통과. §6 체크리스트를 Phase 2 준비로 갱신. |

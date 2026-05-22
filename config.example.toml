@@ -1,0 +1,51 @@
+# config.example.toml — 실제 운영용 config.toml 의 템플릿.
+#
+# 사용법:
+#   1) 이 파일을 config.toml 로 복사
+#   2) 비어 있는 *_db_id, *_page_id 채워넣기 (Phase 4 에서)
+#   3) ANTHROPIC_API_KEY, NOTION_API_TOKEN 은 환경변수로 별도 설정
+#
+# config.toml 은 .gitignore 에 막혀있어 커밋되지 않음.
+
+[anthropic]
+api_key_env = "ANTHROPIC_API_KEY"
+model = "claude-sonnet-4-6"
+fallback_model = "claude-opus-4-7"
+
+[notion]
+api_token_env = "NOTION_API_TOKEN"
+tasks_db_id = ""        # Phase 4 에서 채움
+whitelist_db_id = ""    # Phase 4 에서 채움
+inbox_page_id = ""      # Phase 4 에서 채움
+
+[paths]
+inbox_folder = "~/lovable-agent/inbox/"
+db_path = "~/lovable-agent/agent.db"
+screenshot_temp_dir = "~/lovable-agent/screenshots/"
+
+[scheduling]
+reminder_check_interval_seconds = 60
+notion_poll_interval_seconds = 300
+late_reminder_threshold_hours = 6
+default_reminder_offsets_hours = [24, 0]   # D-1, D-day
+
+[kakao]
+max_send_retries = 3
+send_retry_delay_seconds = 30
+# 오발송 방지 3중 방어 (ARCHITECTURE §4.6.3)
+require_friends_tab_reset = true
+require_hwnd_snapshot_diff = true
+require_title_exact_match = true
+# 스팸 회피 (ARCHITECTURE §4.6.5)
+inter_message_delay_min_seconds = 5
+inter_message_delay_max_seconds = 15
+rest_after_n_messages = 10
+rest_duration_min_seconds = 60
+rest_duration_max_seconds = 120
+# 상태 감지 (ARCHITECTURE §4.6.4)
+detection_mode = "uia_first"   # uia_first | time_only | uia_with_ocr_fallback
+
+[safety]
+message_prefix = "[AI 자동 팔로우업] "
+require_status_confirmed = true
+double_check_whitelist = true
