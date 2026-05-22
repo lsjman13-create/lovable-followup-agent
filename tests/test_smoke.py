@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from lovable_agent.config import load_config
 from lovable_agent.domain import ExtractedTask, TaskStatus, WindowSpec
-from lovable_agent.main import _run_dry_cycle, main
+from lovable_agent.main import main
 from lovable_agent.process.mock_client import MockLLMClient
 from lovable_agent.safety.prefix import enforce_prefix
 from lovable_agent.storage.mock_notion_repo import MockNotionRepository
@@ -42,15 +42,8 @@ def test_mock_notion_repo_seeded_state():
     assert repo.is_chatroom_whitelisted("존재하지 않는 톡방") is False
 
 
-def test_dry_run_full_cycle_returns_zero():
-    """Phase 1 완료 기준 — --dry-run 한 사이클이 정상 종료 (반환 0)."""
-    llm = MockLLMClient()
-    repo = MockNotionRepository()
-    assert _run_dry_cycle(llm, repo, message_prefix="[AI 자동 팔로우업] ") == 0
-
-
 def test_main_dry_run_argv_returns_zero():
-    """main(['--dry-run']) 가 정상 종료해야 함 — entrypoint 통합."""
+    """Phase 3 통합 dry-run 이 정상 종료 (반환 0) — entrypoint 통합."""
     assert main(["--dry-run"]) == 0
 
 

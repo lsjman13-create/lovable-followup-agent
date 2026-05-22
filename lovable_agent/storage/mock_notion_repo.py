@@ -43,6 +43,8 @@ class MockNotionRepository:
             "source": "kakao",
             "source_detail": "MOP 운영방",
             "status": TaskStatus.CONFIRMED,
+            "chatroom_title": "MOP 운영방",
+            "followup_enabled": True,
             "notes": [],
         }
 
@@ -74,6 +76,9 @@ class MockNotionRepository:
                     assignee=t["assignee"],
                     due_date=t["due_date"],
                     one_line_summary=t["what"][:80],
+                    status=t["status"],
+                    chatroom_title=t.get("chatroom_title", ""),
+                    followup_enabled=t.get("followup_enabled", True),
                 )
             )
         return result
@@ -90,6 +95,8 @@ class MockNotionRepository:
             "source": task.source,
             "source_detail": task.source_detail,
             "status": TaskStatus.REVIEW_PENDING,
+            "chatroom_title": task.source_detail or "",
+            "followup_enabled": True,
             "notes": [],
         }
         return task_id

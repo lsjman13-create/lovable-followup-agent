@@ -19,8 +19,10 @@
 
 - ✅ Phase 0 — 요구사항·설계·결정 사항 문서화 (PRD/ARCHITECTURE/DECISIONS/README/PLAN)
 - ✅ Phase 0 — 핵심 의사결정 12건 + kakao-sender (v2) 설계 차용
-- ✅ **Phase 1 — 코드 골조 완성** (2026-05-23): pyproject.toml + 디렉터리 트리 + LLMClient Protocol + Mock 구현 + main.py --dry-run. pytest 8 passed, ruff·dry-run 통과.
-- ⏳ 다음 — Phase 2 (카톡 자동화 검증). 본인 PC 카톡 클라이언트 상태 점검 필요.
+- ✅ **Phase 1 — 코드 골조 완성** (2026-05-23): pyproject.toml + 디렉터리 트리 + LLMClient Protocol + Mock 구현 + main.py --dry-run. pytest 8 passed.
+- ✅ **Phase 2 부분 — `scripts/investigate.py`** (2026-05-23): 카톡 HWND/UIA 덤프 도구 작성. 본인 PC 실 실행은 대기.
+- ✅ **Phase 3 (mock 가능 부분) — 분석·저장 로직** (2026-05-23): 카톡 파서 + SQLite + Whitelist 더블체크 + Extractor + Scheduler(6시간 룰) + Watcher + Notifier. pytest **70 passed**, dry-run 6단계 통합 흐름.
+- ⏳ 다음 — Phase 2 의 본인 PC 카톡 점검 + 자동화 Step 들 구현, 그 다음에야 발송 통합 검증 가능.
 
 ---
 
@@ -151,11 +153,12 @@
 - 본인의 실제 카톡 `.txt` 샘플 1~2개 확보 (테스트 톡방 익스포트)
 
 **완료 기준**
-- [ ] `.txt` 샘플 → 파서 통과 → mock Extractor 가 그럴듯한 4요소 반환 → mock 노션에 기록 → 발송 큐 enqueue → Phase 2의 카톡 Sender 호출 → 테스트 톡방 발송 까지 **한 번에 흐름**
-- [ ] 6시간 룰 단위 테스트 (시간 mock 으로)
-- [ ] 화이트리스트 더블체크 단위 테스트 (캐시 vs mock 노션 불일치 케이스)
-- [ ] `[AI 자동 팔로우업] ` 접두어 강제 어서션 테스트
-- [ ] Notifier 가 데스크톱 알림을 실제로 띄운다 (눈으로 확인)
+- [x] `.txt` 샘플 → 파서 통과 → mock Extractor 가 그럴듯한 4요소 반환 → mock 노션에 기록 → 발송 큐 enqueue 까지 **한 번에 흐름** *(2026-05-23, `--dry-run` 6단계 통합 흐름 확인)*
+- [ ] 위 흐름의 끝에서 Phase 2의 카톡 Sender 호출 + 테스트 톡방 발송 *(Phase 2 완료 후)*
+- [x] 6시간 룰 단위 테스트 (시간 mock 으로) *(2026-05-23, `test_scheduler.py` 18개 케이스)*
+- [x] 화이트리스트 더블체크 단위 테스트 (캐시 vs mock 노션 불일치 케이스) *(2026-05-23, `test_whitelist.py` 7개)*
+- [x] `[AI 자동 팔로우업] ` 접두어 강제 어서션 테스트 *(2026-05-23, 스케줄러 빌드 메시지 검증 + safety/prefix.py 멱등 검증)*
+- [ ] Notifier 가 데스크톱 알림을 실제로 띄운다 (눈으로 확인) *(Windows 본인 PC 확인 필요)*
 
 **위험 / 주의**
 - mock Extractor 는 "고정된 가짜 응답"이 아니라 **"항상 같은 입력에 같은 가짜 응답"** 정도면 충분. Phase 4에서 실제 Claude로 갈아끼울 것
@@ -291,3 +294,4 @@ Phase 2 끝났다는 신호 = "테스트 톡방에 `[AI 자동 팔로우업] 테
 |---|---|
 | 2026-05-23 | 초안 작성 (Phase 1~5). 외부 연결을 Phase 4로 미루는 새 순서 반영. |
 | 2026-05-23 | Phase 1 완료. 코드 골조·Mock 구현·검증 4종 통과. §6 체크리스트를 Phase 2 준비로 갱신. |
+| 2026-05-23 | Phase 2 `investigate.py` 코드 작성 완료 (본인 PC 실 실행 대기). Phase 3 mock 가능 부분 완료 — 카톡 파서·SQLite·Whitelist·Extractor·Scheduler·Watcher·Notifier. pytest 70 passed. |

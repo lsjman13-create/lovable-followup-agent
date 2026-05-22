@@ -24,13 +24,16 @@ class TaskStatus(StrEnum):
 
 @dataclass(frozen=True)
 class TaskSummary:
-    """기존 진행 중인 업무의 간략 요약 — Extractor가 중복 판별에 사용."""
+    """기존 진행 중인 업무의 간략 요약 — Extractor·Scheduler 가 사용."""
 
     task_id: str  # 노션 페이지 ID
     title: str
     assignee: str
     due_date: datetime | None
     one_line_summary: str
+    status: TaskStatus = TaskStatus.CONFIRMED
+    chatroom_title: str = ""  # 발송할 톡방 (확정된 업무일 때만 의미 있음)
+    followup_enabled: bool = True
 
 
 @dataclass
