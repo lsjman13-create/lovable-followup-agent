@@ -15,6 +15,8 @@ dependencies = [
     # 카톡 자동화 (Phase 2 이후 실제 사용)
     "pywin32>=308; sys_platform == 'win32'",
     "uiautomation>=2.0; sys_platform == 'win32'",
+    # 프로세스명 조회 (scripts/investigate.py 가 카톡 프로세스 식별에 사용)
+    "psutil>=5.9.0",
     # 폴더 감시
     "watchdog>=4.0.0",
     # 스케줄러
