@@ -23,6 +23,7 @@
 - ✅ **Phase 2 부분 — `scripts/investigate.py`** (2026-05-23): 카톡 HWND/UIA 덤프 도구 작성 + `--auto-open-self-chat` 옵션. 본인 PC 실측으로 WindowSpec 확정.
 - ✅ **Phase 2 본구현 — 카톡 자동화 모듈 7개** (2026-05-23): `hwnd_utils.py` + `window_spec.py` + Step 6개 + `kakao_sender.py` 오케스트레이션. **124 passed** (단위 + 통합).
 - ✅ **Phase 2 완료 기준 — 실 카톡 5회 연속 발송 성공** (2026-05-23): `scripts/send_test.py` 로 "나와의 채팅" 대상 5/5 성공. **본인 환경 실측 — 친구 탭이 아니라 채팅 탭에서 검색** + **Alt+Enter 가 아니라 더블클릭(WM_LBUTTONDBLCLK)** 으로 별도 창 오픈 확인. EnsureFriendsTabStep 옵션화·OpenChatroomStep open_method 옵션화로 양쪽 케이스 모두 지원.
+- ✅ **Phase 3 통합 — Scheduler ↔ KakaoSender 연결** (2026-05-23): `output/send_dispatcher.py` 신규 — 발송 큐에서 queued 항목을 꺼내 KakaoSender.send() 호출, send_history 기록 + Notifier 알림. `--dry-run` 흐름이 7단계로 확장. pytest **133 passed** (+9 dispatcher tests).
 - ✅ **Phase 3 (mock 가능 부분) — 분석·저장 로직** (2026-05-23): 카톡 파서 + SQLite + Whitelist 더블체크 + Extractor + Scheduler(6시간 룰) + Watcher + Notifier. pytest **70 passed**, dry-run 6단계 통합 흐름.
 - ⏳ 다음 — Phase 2 의 본인 PC 카톡 점검 + 자동화 Step 들 구현, 그 다음에야 발송 통합 검증 가능.
 
@@ -156,7 +157,7 @@
 
 **완료 기준**
 - [x] `.txt` 샘플 → 파서 통과 → mock Extractor 가 그럴듯한 4요소 반환 → mock 노션에 기록 → 발송 큐 enqueue 까지 **한 번에 흐름** *(2026-05-23, `--dry-run` 6단계 통합 흐름 확인)*
-- [ ] 위 흐름의 끝에서 Phase 2의 카톡 Sender 호출 + 테스트 톡방 발송 *(Phase 2 완료 후)*
+- [x] 위 흐름의 끝에서 Phase 2의 카톡 Sender 호출 + 테스트 톡방 발송 *(2026-05-23, SendDispatcher 로 Scheduler ↔ KakaoSender 연결. dry-run mock sender 로 흐름 검증, 실 카톡 발송은 send_test.py 로 5/5 성공)*
 - [x] 6시간 룰 단위 테스트 (시간 mock 으로) *(2026-05-23, `test_scheduler.py` 18개 케이스)*
 - [x] 화이트리스트 더블체크 단위 테스트 (캐시 vs mock 노션 불일치 케이스) *(2026-05-23, `test_whitelist.py` 7개)*
 - [x] `[AI 자동 팔로우업] ` 접두어 강제 어서션 테스트 *(2026-05-23, 스케줄러 빌드 메시지 검증 + safety/prefix.py 멱등 검증)*
@@ -304,3 +305,4 @@ Phase 2 끝났다는 신호 = "테스트 톡방에 `[AI 자동 팔로우업] 테
 | 2026-05-23 | Phase 2 `investigate.py` 코드 작성 완료 (본인 PC 실 실행 대기). Phase 3 mock 가능 부분 완료 — 카톡 파서·SQLite·Whitelist·Extractor·Scheduler·Watcher·Notifier. pytest 70 passed. |
 | 2026-05-23 | Phase 2 본구현 완료 — hwnd_utils + window_spec + Step 6개 + kakao_sender 오케스트레이션. WindowSpec 본인 환경 실측 기본값 확정. pytest **124 passed**. 실 카톡 발송 검증은 본인 PC 별도 단계. |
 | 2026-05-23 | **Phase 2 완료 기준 달성** — "나와의 채팅" 대상 5/5 발송 성공. 핵심 실측 결과: 본인을 검색하려면 **친구 탭이 아니라 채팅 탭**에서 본명으로, **Alt+Enter 가 아니라 더블클릭**으로 별도 창 오픈. 코드에 양쪽 케이스 모두 옵션화. |
+| 2026-05-23 | **Phase 3 통합 완료** — SendDispatcher 신규로 Scheduler 발송 큐 ↔ KakaoSender 연결. dry-run 7단계 흐름 (파서 → Extractor → Whitelist → Scheduler → 큐 미리보기 → Dispatcher → Notifier). pytest 133 passed. |

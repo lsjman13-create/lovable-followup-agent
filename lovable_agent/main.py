@@ -11,7 +11,9 @@
 3. SQLite(인메모리) 발송 큐 초기화
 4. WhitelistChecker 로 톡방 검증
 5. ReminderScheduler.tick 으로 due 도래 항목 enqueue
-6. Notifier 로 결과 알림 (실제 토스트는 Windows 에서만)
+6. **SendDispatcher.dispatch_pending — 발송 큐 → mock KakaoSender 호출**
+   send_history 기록 + 큐 상태 갱신 (실 카톡 발송 X)
+7. Notifier 로 결과 알림 (실제 토스트는 Windows 에서만)
 """
 
 from __future__ import annotations
@@ -21,8 +23,11 @@ import logging
 import sys
 
 from lovable_agent.config import load_config
+from lovable_agent.domain import WindowSpec
 from lovable_agent.ingest.kakao_parser import format_for_llm, parse_kakao_text
+from lovable_agent.output.kakao_sender import SendResult
 from lovable_agent.output.notifier import Notifier
+from lovable_agent.output.send_dispatcher import SendDispatcher
 from lovable_agent.process.extractor import TaskExtractor
 from lovable_agent.process.mock_client import MockLLMClient
 from lovable_agent.safety.whitelist import WhitelistChecker
@@ -57,6 +62,30 @@ _FAKE_KAKAO_TXT = """\
 """
 
 
+class _MockKakaoSender:
+    """Dry-run 용 가짜 KakaoSender — 실제 카톡 호출 없이 항상 성공 반환.
+
+    실 발송은 Phase 5 운영 단계에서 `KakaoSender(default_steps())` 로 교체.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[WindowSpec, str]] = []
+
+    def send(self, target: WindowSpec, message: str) -> SendResult:
+        self.calls.append((target, message))
+        return SendResult(
+            success=True,
+            completed_steps=[
+                "ensure_friends_tab",
+                "snapshot_hwnds",
+                "open_chatroom",
+                "verify_chatroom_title",
+                "type_message",
+                "press_enter",
+            ],
+        )
+
+
 def _run_dry_cycle(config) -> int:
     """Phase 3 dry-run — 카톡 파서 + Extractor + SQLite + 스케줄러 + 화이트리스트
     통합 시나리오. 외부 호출 0건.
@@ -73,11 +102,13 @@ def _run_dry_cycle(config) -> int:
     whitelist = WhitelistChecker(sqlite=sqlite, notion=notion)
     scheduler = ReminderScheduler(notion=notion, sqlite=sqlite)
     notifier = Notifier()
+    mock_sender = _MockKakaoSender()
+    dispatcher = SendDispatcher(sqlite=sqlite, sender=mock_sender, notifier=notifier)
 
     try:
         # 1) 카톡 파서
         messages = parse_kakao_text(_FAKE_KAKAO_TXT)
-        log.info("[1/6] 카톡 .txt 파싱 — %d개 메시지 추출", len(messages))
+        log.info("[1/7] 카톡 .txt 파싱 — %d개 메시지 추출", len(messages))
         for m in messages[:3]:
             log.info("      ↳ %s | %s: %s", m.timestamp, m.speaker, m.body[:40])
 
@@ -85,7 +116,7 @@ def _run_dry_cycle(config) -> int:
         llm_input = format_for_llm(messages)
         outcome = extractor.process_text(llm_input, source_label="가짜 톡방 (dry-run)")
         log.info(
-            "[2/6] Extractor — 신규 %d건 / 중복 병합 %d건 (총 추출 %d건)",
+            "[2/7] Extractor — 신규 %d건 / 중복 병합 %d건 (총 추출 %d건)",
             len(outcome.new_task_ids),
             len(outcome.merged_task_ids),
             outcome.raw_extracted_count,
@@ -95,7 +126,7 @@ def _run_dry_cycle(config) -> int:
         check_ok = whitelist.check("MOP 운영방")
         check_no = whitelist.check("등록되지 않은 톡방")
         log.info(
-            "[3/6] Whitelist — 'MOP 운영방' %s | '등록되지 않은 톡방' %s",
+            "[3/7] Whitelist — 'MOP 운영방' %s | '등록되지 않은 톡방' %s",
             "✓ 통과" if check_ok.allowed else "✗ 차단",
             "✓ 통과" if check_no.allowed else "✗ 차단",
         )
@@ -103,15 +134,15 @@ def _run_dry_cycle(config) -> int:
         # 4) Scheduler tick — 확정된 시드 업무가 발송 큐에 enqueue 되어야 함
         tick = scheduler.tick()
         log.info(
-            "[4/6] Scheduler.tick — enqueued=%d, skipped_too_late=%d, already_queued=%d",
+            "[4/7] Scheduler.tick — enqueued=%d, skipped_too_late=%d, already_queued=%d",
             tick.enqueued,
             tick.skipped_too_late,
             tick.already_queued,
         )
 
-        # 5) 발송 큐 미리보기 (실제 발송 X — Phase 2 카톡 자동화 이후)
+        # 5) 발송 큐 미리보기 (dispatch 전 상태)
         pending = sqlite.list_pending(limit=5)
-        log.info("[5/6] send_queue 미리보기 — %d건 대기 중", len(pending))
+        log.info("[5/7] send_queue 미리보기 — %d건 대기 중", len(pending))
         for row in pending[:3]:
             log.info(
                 "      ↳ [%s] %s → %s",
@@ -120,17 +151,29 @@ def _run_dry_cycle(config) -> int:
                 row["message"][:60],
             )
 
-        # 6) Notifier — 화이트리스트에 없는 톡방을 사용자에게만 알림
+        # 6) SendDispatcher — Scheduler 가 enqueue 한 항목들을 mock sender 로 처리
+        #    실 운영(Phase 5) 에선 mock_sender 대신 KakaoSender(default_steps()) 사용.
+        dispatch = dispatcher.dispatch_pending()
+        log.info(
+            "[6/7] SendDispatcher — attempted=%d, succeeded=%d, failed=%d (mock sender)",
+            dispatch.attempted,
+            dispatch.succeeded,
+            dispatch.failed,
+        )
+        for target, msg in mock_sender.calls[:3]:
+            log.info("      ↳ → %s: %s", target.title_exact, msg[:60])
+
+        # 7) Notifier — 화이트리스트에 없는 톡방을 사용자에게만 알림
         if not check_no.allowed:
             notifier.warning(
                 title="수동 처리 필요",
                 body=f"'{check_no.chatroom}' 은(는) 화이트리스트에 없어 자동 발송이 차단됐습니다.",
             )
             log.info(
-                "[6/6] Notifier 호출 완료 (last_level=%s)", notifier.last_notification.level.value
+                "[7/7] Notifier 호출 완료 (last_level=%s)", notifier.last_notification.level.value
             )
         else:
-            log.info("[6/6] Notifier — 알릴 사항 없음")
+            log.info("[7/7] Notifier — 알릴 사항 없음")
 
         log.info("=" * 60)
         log.info(
