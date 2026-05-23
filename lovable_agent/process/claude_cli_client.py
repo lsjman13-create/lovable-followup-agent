@@ -222,25 +222,47 @@ def _dict_to_extracted_task(d: dict) -> ExtractedTask:
 def _resolve_claude_exe() -> str:
     """PATH 에서 claude 찾고, npm shim(.CMD/.BAT) 이면 실제 .exe 경로로 변환.
 
-    npm 으로 설치된 claude 는 `claude.CMD` shim 인데, Windows subprocess 에서
-    호출 시 내부 인용 처리 문제로 종종 실패함. node_modules 안의 실제
-    `claude.exe` 를 직접 호출하면 안정적.
+    PATH 가 비어있을 때를 대비해 npm 표준 설치 경로 fallback 도 시도.
     """
     found = shutil.which("claude")
-    if found is None:
-        raise RuntimeError(
-            "claude CLI 를 PATH 에서 찾을 수 없음. https://docs.claude.com/en/docs/claude-code 참조"
-        )
-    path = Path(found)
-    if path.suffix.upper() in (".CMD", ".BAT", ".PS1"):
-        # npm 설치 표준 경로
-        exe_candidate = (
-            path.parent / "node_modules" / "@anthropic-ai" / "claude-code" / "bin" / "claude.exe"
-        )
-        if exe_candidate.exists():
-            log.debug("npm shim → exe 직접 경로로 변환: %s", exe_candidate)
-            return str(exe_candidate)
-    return str(path)
+    if found is not None:
+        path = Path(found)
+        if path.suffix.upper() in (".CMD", ".BAT", ".PS1"):
+            # npm shim 의 표준 위치
+            exe_candidate = (
+                path.parent
+                / "node_modules"
+                / "@anthropic-ai"
+                / "claude-code"
+                / "bin"
+                / "claude.exe"
+            )
+            if exe_candidate.exists():
+                log.debug("npm shim → exe 직접 경로로 변환: %s", exe_candidate)
+                return str(exe_candidate)
+        return str(path)
+
+    # Fallback: PATH 에 없으면 npm 표준 설치 경로 직접 탐색 (PowerShell tool 의 PATH
+    # reset 등에서 안정성 확보)
+    npm_default = (
+        Path.home()
+        / "AppData"
+        / "Roaming"
+        / "npm"
+        / "node_modules"
+        / "@anthropic-ai"
+        / "claude-code"
+        / "bin"
+        / "claude.exe"
+    )
+    if npm_default.exists():
+        log.debug("PATH 미발견 — npm 표준 경로 fallback 사용: %s", npm_default)
+        return str(npm_default)
+
+    raise RuntimeError(
+        "claude CLI 를 PATH 에서도, npm 표준 경로에서도 찾을 수 없음. "
+        "https://docs.claude.com/en/docs/claude-code 참조"
+    )
 
 
 def ensure_claude_cli_available() -> Path:

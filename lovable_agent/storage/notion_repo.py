@@ -292,6 +292,11 @@ def _extract_checkbox(prop: dict | None) -> bool:
 
 
 def _extract_date(prop: dict | None) -> datetime | None:
+    """노션 date property → datetime. 우리 시스템 컨벤션상 naive 로 통일.
+
+    노션은 timezone-aware ISO 를 반환할 수 있는데, 우리 Scheduler 는 `datetime.now()`
+    (naive) 와 비교해서 tz-aware 와 섞이면 TypeError. 항상 naive 반환.
+    """
     if not prop:
         return None
     date_obj = prop.get("date")
@@ -301,7 +306,10 @@ def _extract_date(prop: dict | None) -> datetime | None:
     if not start:
         return None
     try:
-        return datetime.fromisoformat(start.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+        return dt
     except ValueError:
         return None
 
