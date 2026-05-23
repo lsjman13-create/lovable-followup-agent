@@ -57,7 +57,12 @@ _TERMINAL_STATUSES = {TaskStatus.DONE.value, TaskStatus.CANCELLED.value}
 
 
 class NotionRepository:
-    """실 노션 API 백엔드. token + 3개 DB ID 로 초기화."""
+    """실 노션 API 백엔드. token + 3개 DB ID 로 초기화.
+
+    notion-client 3.x 의 변화 반영:
+    - `databases.query` 는 deprecated → `data_sources.query` 사용
+    - 각 DB 의 default data_source_id 를 init 시 1회 조회·캐시
+    """
 
     def __init__(
         self,
@@ -66,6 +71,10 @@ class NotionRepository:
         whitelist_db_id: str,
         inbox_db_id: str,
         client: Any = None,
+        # 테스트 친화 — data_source_id 직접 주입 시 retrieve 안 함
+        tasks_ds_id: str | None = None,
+        whitelist_ds_id: str | None = None,
+        inbox_ds_id: str | None = None,
     ) -> None:
         """
         Args:
@@ -74,6 +83,8 @@ class NotionRepository:
             whitelist_db_id: Whitelist DB 의 ID.
             inbox_db_id: Inbox DB 의 ID.
             client: 테스트용 fake notion Client 주입. None 이면 실제 Client 생성.
+            tasks_ds_id / whitelist_ds_id / inbox_ds_id: 테스트에서 retrieve 회피용
+                직접 주입. None 이면 client.databases.retrieve 로 조회.
         """
         if client is None:
             from notion_client import Client  # 임포트 비용 회피 — 실제 호출 시점에 import
@@ -83,14 +94,26 @@ class NotionRepository:
         self._tasks_db = tasks_db_id
         self._whitelist_db = whitelist_db_id
         self._inbox_db = inbox_db_id
+        # data_source_id 캐시 (notion-client 3.x 의 query 대상)
+        self._tasks_ds = tasks_ds_id or self._get_default_data_source_id(tasks_db_id)
+        self._whitelist_ds = whitelist_ds_id or self._get_default_data_source_id(whitelist_db_id)
+        self._inbox_ds = inbox_ds_id or self._get_default_data_source_id(inbox_db_id)
+
+    def _get_default_data_source_id(self, db_id: str) -> str:
+        """DB 의 첫 번째 (default) data source ID 조회."""
+        db = self._client.databases.retrieve(database_id=db_id)
+        sources = db.get("data_sources") or []
+        if not sources:
+            raise RuntimeError(f"DB {db_id} 에 data_sources 가 없음 — 노션 API 응답 확인 필요")
+        return str(sources[0]["id"])
 
     # ──────────────────────────────────────────────────────────────
     # Tasks DB
     # ──────────────────────────────────────────────────────────────
     def list_active_tasks(self) -> list[TaskSummary]:
         """완료·취소 외의 모든 업무 — Extractor·Scheduler 의 입력."""
-        results = self._client.databases.query(
-            database_id=self._tasks_db,
+        results = self._client.data_sources.query(
+            data_source_id=self._tasks_ds,
             filter={
                 "and": [
                     {
@@ -144,8 +167,8 @@ class NotionRepository:
     # ──────────────────────────────────────────────────────────────
     def list_whitelisted_chatrooms(self) -> list[WindowSpec]:
         """Active 체크된 화이트리스트 톡방 목록."""
-        results = self._client.databases.query(
-            database_id=self._whitelist_db,
+        results = self._client.data_sources.query(
+            data_source_id=self._whitelist_ds,
             filter={"property": COL_WL_ACTIVE, "checkbox": {"equals": True}},
             page_size=100,
         )
@@ -162,8 +185,8 @@ class NotionRepository:
     def is_chatroom_whitelisted(self, title_exact: str) -> bool:
         if not title_exact or not title_exact.strip():
             return False
-        results = self._client.databases.query(
-            database_id=self._whitelist_db,
+        results = self._client.data_sources.query(
+            data_source_id=self._whitelist_ds,
             filter={
                 "and": [
                     {"property": COL_WL_ACTIVE, "checkbox": {"equals": True}},
@@ -190,8 +213,8 @@ class NotionRepository:
     # ──────────────────────────────────────────────────────────────
     def fetch_new_inbox_memos(self) -> list[tuple[str, str]]:
         """Processed=false 인 Inbox 항목 — (page_id, memo_text)."""
-        results = self._client.databases.query(
-            database_id=self._inbox_db,
+        results = self._client.data_sources.query(
+            data_source_id=self._inbox_ds,
             filter={"property": COL_INBOX_PROCESSED, "checkbox": {"equals": False}},
             page_size=100,
         )

@@ -15,9 +15,24 @@ from lovable_agent.storage.notion_repo import (
 
 
 # ──────────────────────────────────────────────────────────────
-# Fake notion Client — 호출 기록 + 시드 응답
+# Fake notion Client — notion-client 3.x 스타일 (data_sources.query)
 # ──────────────────────────────────────────────────────────────
 class _FakeDatabases:
+    """databases.retrieve 만 노출 (3.x 에서 query 는 data_sources 로 이동)."""
+
+    def __init__(self) -> None:
+        self.retrieve_calls: list[dict] = []
+
+    def retrieve(self, database_id: str, **kwargs: Any) -> dict:
+        self.retrieve_calls.append({"database_id": database_id})
+        # 각 DB 에 동일 형식의 ds 1개 시드
+        return {
+            "id": database_id,
+            "data_sources": [{"id": f"{database_id}_ds", "name": "default"}],
+        }
+
+
+class _FakeDataSources:
     def __init__(self, query_result: dict | None = None) -> None:
         self.query_result = query_result or {"results": []}
         self.query_calls: list[dict] = []
@@ -48,7 +63,8 @@ class _FakePages:
 
 class _FakeClient:
     def __init__(self, query_result: dict | None = None) -> None:
-        self.databases = _FakeDatabases(query_result=query_result)
+        self.databases = _FakeDatabases()
+        self.data_sources = _FakeDataSources(query_result=query_result)
         self.pages = _FakePages()
 
 
@@ -145,8 +161,8 @@ def test_list_active_tasks_returns_summaries():
     assert s.chatroom_title == "MOP 운영방"
     assert s.followup_enabled is True
     # 쿼리 필터에 종료 상태 제외 조건이 있는지
-    assert len(fake.databases.query_calls) == 1
-    filter_arg = fake.databases.query_calls[0].get("filter", {})
+    assert len(fake.data_sources.query_calls) == 1
+    filter_arg = fake.data_sources.query_calls[0].get("filter", {})
     assert "and" in filter_arg
 
 
@@ -243,7 +259,7 @@ def test_list_whitelisted_chatrooms_filters_active():
     assert len(specs) == 1
     assert specs[0].title_exact == "MOP 운영방"
     # Active=true 필터링 확인
-    filter_arg = fake.databases.query_calls[0]["filter"]
+    filter_arg = fake.data_sources.query_calls[0]["filter"]
     assert filter_arg == {"property": "Active", "checkbox": {"equals": True}}
 
 
@@ -257,7 +273,7 @@ def test_is_chatroom_whitelisted_empty_returns_false():
 def test_is_chatroom_whitelisted_queries_with_active_and_or_filter():
     repo, fake = _make_repo(query_result={"results": [{"id": "x"}]})
     assert repo.is_chatroom_whitelisted("MOP") is True
-    filter_arg = fake.databases.query_calls[0]["filter"]
+    filter_arg = fake.data_sources.query_calls[0]["filter"]
     assert filter_arg["and"][0] == {"property": "Active", "checkbox": {"equals": True}}
 
 
@@ -285,7 +301,7 @@ def test_fetch_new_inbox_memos_returns_id_and_text():
     memos = repo.fetch_new_inbox_memos()
     assert memos == [("memo_1", "내일 미팅")]
     # Processed=false 필터링
-    filter_arg = fake.databases.query_calls[0]["filter"]
+    filter_arg = fake.data_sources.query_calls[0]["filter"]
     assert filter_arg == {"property": "Processed", "checkbox": {"equals": False}}
 
 

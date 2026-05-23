@@ -115,31 +115,90 @@ def _inbox_db_schema() -> dict:
 # ──────────────────────────────────────────────────────────────
 # 헬퍼
 # ──────────────────────────────────────────────────────────────
-_NOTION_ID_RE = re.compile(r"([0-9a-f]{32})", re.IGNORECASE)
+# Notion 페이지 URL 끝부분 패턴 — 32자 hex (대시 포함/미포함 모두) 또는 표준 UUID
+_NOTION_ID_DASHED = re.compile(
+    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", re.IGNORECASE
+)
+_NOTION_ID_BARE = re.compile(r"([0-9a-f]{32})", re.IGNORECASE)
 
 
 def _extract_page_id(parent: str) -> str | None:
-    """URL 또는 ID 어느 쪽이든 32자리 hex ID 추출."""
-    p = parent.strip().replace("-", "")
-    m = _NOTION_ID_RE.search(p)
-    return m.group(1) if m else None
+    """URL 또는 ID 어느 쪽이든 32자리 hex ID 추출 (대시는 제거).
+
+    URL 의 페이지 이름 부분 (예: 'Lovable-') 에 hex 문자가 포함될 수 있어서
+    단순히 dash 제거 후 첫 32 hex 추출은 위험. 다음 순서로 시도:
+    1. 쿼리스트링 제거 (?source=...)
+    2. 마지막 path 세그먼트 (마지막 / 다음)
+    3. 그 안의 마지막 - 다음 부분이 32자 hex 인지 확인 (가장 흔한 URL 패턴)
+    4. fallback: 전체 문자열에서 표준 UUID(대시) 또는 32자 hex 찾기
+    """
+    p = parent.strip().split("?")[0]
+    last_seg = p.rsplit("/", 1)[-1]
+    after_dash = last_seg.rsplit("-", 1)[-1] if "-" in last_seg else last_seg
+    if _NOTION_ID_BARE.fullmatch(after_dash):
+        return after_dash.lower()
+
+    # fallback 1: 표준 UUID (대시 포함)
+    m = _NOTION_ID_DASHED.search(parent)
+    if m:
+        return m.group(1).replace("-", "").lower()
+    # fallback 2: 마지막 path 세그먼트가 그대로 32자 hex
+    if _NOTION_ID_BARE.fullmatch(last_seg.replace("-", "")):
+        return last_seg.replace("-", "").lower()
+    return None
 
 
-def _create_db(client, parent_id: str, title: str, schema: dict, dry_run: bool) -> str:
-    """notion-client 로 단일 DB 생성. dry_run 이면 schema 만 출력하고 fake ID 반환."""
+def _create_db(
+    client,
+    parent_id: str,
+    title: str,
+    schema: dict,
+    title_col: str,
+    dry_run: bool,
+) -> str:
+    """단일 DB 생성 + schema 채우기 (notion-client 3.x 2단계 흐름).
+
+    notion-client 3.x 의 `databases.create` 는 properties 인자를 무시하고 빈 DB
+    만 만든다. 별도로 `data_sources.update` 를 호출해야 schema 가 들어감.
+
+    Args:
+        title_col: schema 의 title key (예: "Title"). 기존 default title (보통
+            "Name") 을 이 이름으로 rename 한다.
+    """
     if dry_run:
-        log.info("[DRY-RUN] DB 생성 스킵: %r", title)
+        log.info("[DRY-RUN] DB 생성 스킵: %r (title_col=%r)", title, title_col)
         log.info("[DRY-RUN]   schema keys: %s", list(schema.keys()))
         return "dry-run-id"
 
+    # 1) 빈 DB 생성
     response = client.databases.create(
         parent={"type": "page_id", "page_id": parent_id},
         title=[{"type": "text", "text": {"content": title}}],
-        properties=schema,
     )
     db_id = str(response["id"])
     url = response.get("url", "")
-    log.info("✅ %s 생성 — id=%s url=%s", title, db_id, url)
+    log.info("✅ %s DB 생성 — id=%s", title, db_id)
+
+    # 2) data source 의 schema 갱신
+    db = client.databases.retrieve(database_id=db_id)
+    data_sources = db.get("data_sources") or []
+    if not data_sources:
+        raise RuntimeError(f"DB {db_id} 에 data_sources 가 없음 — 노션 API 변경 가능성")
+    ds_id = str(data_sources[0]["id"])
+
+    # 기존 default title prop 찾기 + 이름 변경 prop 추가
+    ds = client.data_sources.retrieve(data_source_id=ds_id)
+    old_title = next(
+        (k for k, v in ds.get("properties", {}).items() if v.get("type") == "title"),
+        "Name",
+    )
+    # title 은 schema 에서 제외 (이미 존재) — 기존 prop 의 이름만 변경
+    update_props = {k: v for k, v in schema.items() if k != title_col}
+    if old_title != title_col:
+        update_props[old_title] = {"name": title_col}
+
+    client.data_sources.update(data_source_id=ds_id, properties=update_props)
+    log.info("✅ %s schema 적용 — ds_id=%s, %d개 컬럼 url=%s", title, ds_id, len(schema), url)
     return db_id
 
 
@@ -248,15 +307,17 @@ def main(argv: list[str] | None = None) -> int:
         client = Client(auth=token)
         log.info("Notion Client 생성 완료")
 
-    # DB 3개 생성
+    # DB 3개 생성. title_col 은 각 DB 의 title property 이름 (schema 에 들어있어야 함).
     schemas = [
-        ("Lovable — Tasks", _tasks_db_schema()),
-        ("Lovable — Whitelist", _whitelist_db_schema()),
-        ("Lovable — Inbox", _inbox_db_schema()),
+        ("Lovable — Tasks", _tasks_db_schema(), "Title"),
+        ("Lovable — Whitelist", _whitelist_db_schema(), "Chatroom"),
+        ("Lovable — Inbox", _inbox_db_schema(), "Memo"),
     ]
     ids: list[str] = []
-    for title, schema in schemas:
-        db_id = _create_db(client, parent_id, title, schema, dry_run=args.dry_run)
+    for title, schema, title_col in schemas:
+        db_id = _create_db(
+            client, parent_id, title, schema, title_col=title_col, dry_run=args.dry_run
+        )
         ids.append(db_id)
 
     tasks_db, whitelist_db, inbox_db = ids
