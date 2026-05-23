@@ -77,6 +77,10 @@ KakaoTalk_*.txt
 docs/investigation-*.md
 docs/investigation-result*.md
 
+# 카톡 분석 결과 JSON (실명·업무 내용 등 PII 다수 포함)
+docs/analyze-result-*.json
+docs/analyze-*.json
+
 # 발송 스크린샷 임시 (운영 중 자동 삭제되나 혹시 모르니)
 screenshots/
 *.screenshot.png
