@@ -172,7 +172,7 @@ lovable-followup-agent/
 |---|---|---|
 | **Phase 0** | 2026-05-22 ~ 2026-05-23 | 요구사항·설계 확정. PRD/ARCHITECTURE/DECISIONS/README 작성. 핵심 의사결정 12건 정리. [kakao-sender (v2)](https://github.com/TurnaboutHero/kakao-sender-v2) 의 win32 HWND 주력 + UIA 보조 + 3중 방어 설계 차용. |
 | **Phase 1** | 2026-05-23 ✅ | 코드 골조 완성: `pyproject.toml`(uv 기반) + `lovable_agent/` 패키지 트리 + `LLMClient` Protocol + `MockLLMClient` + `MockNotionRepository` + `main.py --dry-run`. 검증 4종 통과 — `uv sync` ✓ / `pytest 8 passed` ✓ / `ruff check` ✓ / `--dry-run` 한 사이클 정상 종료 ✓. 외부 호출 0건. |
-| **Phase 2** | 예정 | 카톡 자동화 검증 (가장 위험한 부분 우선). `scripts/investigate.py`로 본인 PC 카톡 HWND 트리 실측 → Step 단위 자동화 구현 → 테스트 톡방 5회 연속 발송 성공 + 3중 방어 차단 검증. PLAN §3.2. |
+| **Phase 2** | 2026-05-23 ✅ (코드·테스트), 실 발송 검증 대기 | `scripts/investigate.py` + `--auto-open-self-chat` + 본인 PC 실측 (RICHEDIT50W·EVA_Window_Dblclk·EVA_VH_ListControl_Dblclk 확인) → `hwnd_utils.py` + `window_spec.py` + Step 6개 (3중 방어 포함) + `kakao_sender.py` 오케스트레이션. pytest **124 passed**. 본인 PC에서 테스트 톡방 실 발송 5회 검증만 남음. |
 | **Phase 3** | 2026-05-23 ✅ (Phase 2 의존 부분 제외) | 분석·저장 로직 구현 — 카톡 .txt 파서, Extractor, SQLite 저장소(+migrations), 6시간 룰 스케줄러, 화이트리스트 더블체크, 폴더 watcher, Notifier. pytest **70 passed**, `--dry-run` 6단계 통합 흐름 검증. Phase 2 발송 통합은 대기. |
 | **Phase 4** | 예정 | 외부 연결 — 처음으로 Anthropic API + Notion API 실호출. 회사 노션 정책 확인 → Integration 생성 → 3개 DB 생성 → mock → real 갈아끼움. PLAN §3.4. |
 | **Phase 5** | 예정 | 통합·안전장치·운영 시작. NFR-1 Sev-1 4종 검증 + Windows 작업 스케줄러 등록 + 1개월 운영 후 PRD §8 성공 지표 평가. PLAN §3.5. |
