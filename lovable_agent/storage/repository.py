@@ -42,8 +42,12 @@ class NotionRepository(Protocol):
         ...
 
     # ─── Inbox ───
-    def fetch_new_inbox_memos(self) -> list[str]:
-        """노션 Inbox 페이지에서 아직 처리하지 않은 메모 텍스트 목록."""
+    def fetch_new_inbox_memos(self) -> list[tuple[str, str]]:
+        """노션 Inbox 에서 아직 처리하지 않은 메모 — [(memo_id, text)] 반환.
+
+        memo_id 는 호출자가 처리 완료 후 `mark_inbox_memo_processed` 에 다시 전달.
+        실 노션 구현체에서는 노션 page_id 가 곧 memo_id.
+        """
         ...
 
     def mark_inbox_memo_processed(self, memo_id: str) -> None: ...

@@ -117,8 +117,12 @@ class MockNotionRepository:
         return any(w.title_exact == title_exact for w in self._whitelist)
 
     # ─── Inbox ───
-    def fetch_new_inbox_memos(self) -> list[str]:
-        return [text for (memo_id, text) in self._inbox if memo_id not in self._processed_inbox_ids]
+    def fetch_new_inbox_memos(self) -> list[tuple[str, str]]:
+        return [
+            (memo_id, text)
+            for (memo_id, text) in self._inbox
+            if memo_id not in self._processed_inbox_ids
+        ]
 
     def mark_inbox_memo_processed(self, memo_id: str) -> None:
         self._processed_inbox_ids.add(memo_id)

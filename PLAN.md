@@ -25,6 +25,7 @@
 - ✅ **Phase 2 완료 기준 — 실 카톡 5회 연속 발송 성공** (2026-05-23): `scripts/send_test.py` 로 "나와의 채팅" 대상 5/5 성공. **본인 환경 실측 — 친구 탭이 아니라 채팅 탭에서 검색** + **Alt+Enter 가 아니라 더블클릭(WM_LBUTTONDBLCLK)** 으로 별도 창 오픈 확인. EnsureFriendsTabStep 옵션화·OpenChatroomStep open_method 옵션화로 양쪽 케이스 모두 지원.
 - ✅ **Phase 3 통합 — Scheduler ↔ KakaoSender 연결** (2026-05-23): `output/send_dispatcher.py` 신규 — 발송 큐에서 queued 항목을 꺼내 KakaoSender.send() 호출, send_history 기록 + Notifier 알림. `--dry-run` 흐름이 7단계로 확장. pytest **133 passed** (+9 dispatcher tests).
 - ✅ **Phase 3 실 AI 분석 검증** (2026-05-23): `process/claude_cli_client.py` 신규 — `claude -p` 비대화형 호출로 Anthropic API 키 없이 LLMClient Protocol 구현. `scripts/analyze_kakao.py` 로 실 카톡 .txt (91 메시지) 분석 → **17초만에 1건 정확 추출** (잡담 90건 자동 무시, context·assignee·due_date 정확). pytest **144 passed** (+11 ClaudeCLI). DECISIONS §8.2 "Claude Code 환경 직접 운영" 옵션 부분 실현.
+- ✅ **Phase 4 Notion 부분 — 코드 작성 완료** (2026-05-23): `storage/notion_repo.py` 실 API 구현 + `scripts/setup_notion.py` 1회 DB 자동 생성 도구. notion-client mock 단위 테스트 19개. pytest **163 passed** (+19). 사용자가 토큰 발급 + 부모 페이지 결정 후 setup 1회 실행만 남음.
 - ✅ **Phase 3 (mock 가능 부분) — 분석·저장 로직** (2026-05-23): 카톡 파서 + SQLite + Whitelist 더블체크 + Extractor + Scheduler(6시간 룰) + Watcher + Notifier. pytest **70 passed**, dry-run 6단계 통합 흐름.
 - ⏳ 다음 — Phase 2 의 본인 PC 카톡 점검 + 자동화 Step 들 구현, 그 다음에야 발송 통합 검증 가능.
 
@@ -308,3 +309,4 @@ Phase 2 끝났다는 신호 = "테스트 톡방에 `[AI 자동 팔로우업] 테
 | 2026-05-23 | **Phase 2 완료 기준 달성** — "나와의 채팅" 대상 5/5 발송 성공. 핵심 실측 결과: 본인을 검색하려면 **친구 탭이 아니라 채팅 탭**에서 본명으로, **Alt+Enter 가 아니라 더블클릭**으로 별도 창 오픈. 코드에 양쪽 케이스 모두 옵션화. |
 | 2026-05-23 | **Phase 3 통합 완료** — SendDispatcher 신규로 Scheduler 발송 큐 ↔ KakaoSender 연결. dry-run 7단계 흐름 (파서 → Extractor → Whitelist → Scheduler → 큐 미리보기 → Dispatcher → Notifier). pytest 133 passed. |
 | 2026-05-23 | **Phase 3 실 AI 분석 검증** — ClaudeCLIClient 로 실 카톡 .txt 91 메시지 → 17초만에 actionable 업무 1건 정확 추출. Anthropic API 키 없이 동작. Phase 4 안 거치고도 Phase 3 흐름 검증 완료. pytest 144 passed. |
+| 2026-05-23 | **Phase 4 Notion 코드 완성** — notion_repo.py + setup_notion.py + 단위 테스트. 사용자가 토큰 발급 + 부모 페이지 결정 + setup 1회 실행만 남음. Inbox 를 ARCHITECTURE 의 "페이지" 가 아니라 DB 로 결정. pytest 163 passed. |
