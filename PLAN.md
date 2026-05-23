@@ -22,6 +22,7 @@
 - ✅ **Phase 1 — 코드 골조 완성** (2026-05-23): pyproject.toml + 디렉터리 트리 + LLMClient Protocol + Mock 구현 + main.py --dry-run. pytest 8 passed.
 - ✅ **Phase 2 부분 — `scripts/investigate.py`** (2026-05-23): 카톡 HWND/UIA 덤프 도구 작성 + `--auto-open-self-chat` 옵션. 본인 PC 실측으로 WindowSpec 확정.
 - ✅ **Phase 2 본구현 — 카톡 자동화 모듈 7개** (2026-05-23): `hwnd_utils.py` + `window_spec.py` + Step 6개 + `kakao_sender.py` 오케스트레이션. **124 passed** (단위 + 통합).
+- ✅ **Phase 2 완료 기준 — 실 카톡 5회 연속 발송 성공** (2026-05-23): `scripts/send_test.py` 로 "나와의 채팅" 대상 5/5 성공. **본인 환경 실측 — 친구 탭이 아니라 채팅 탭에서 검색** + **Alt+Enter 가 아니라 더블클릭(WM_LBUTTONDBLCLK)** 으로 별도 창 오픈 확인. EnsureFriendsTabStep 옵션화·OpenChatroomStep open_method 옵션화로 양쪽 케이스 모두 지원.
 - ✅ **Phase 3 (mock 가능 부분) — 분석·저장 로직** (2026-05-23): 카톡 파서 + SQLite + Whitelist 더블체크 + Extractor + Scheduler(6시간 룰) + Watcher + Notifier. pytest **70 passed**, dry-run 6단계 통합 흐름.
 - ⏳ 다음 — Phase 2 의 본인 PC 카톡 점검 + 자동화 Step 들 구현, 그 다음에야 발송 통합 검증 가능.
 
@@ -114,9 +115,9 @@
 **완료 기준**
 - [x] `investigate.py` 가 카톡 메인 창·채팅창의 win32 HWND + UIA 트리를 사람이 읽을 수 있게 출력한다 *(2026-05-23)*
 - [x] kakao-sender v2 가 발견한 패턴(`RICHEDIT50W`, top-level HWND 등)이 본인 PC에서도 확인된다 *(2026-05-23, RICHEDIT50W + EVA_Window_Dblclk + EVA_VH_ListControl_Dblclk 직접 확인)*
-- [ ] **테스트 톡방에 `[AI 자동 팔로우업] 테스트` 메시지를 5회 연속 발송 성공** (실패 0회) *(본인 PC 실 실행 필요 — 코드 준비 완료)*
-- [ ] 일부러 잘못된 톡방명을 줬을 때 **3중 방어 중 한 곳에서 차단** (오발송 0) *(단위 테스트로는 통과 — `test_kakao_sender.py::test_any_pre_send_failure_blocks_typing` 4개 케이스. 실 발송 검증은 대기)*
-- [ ] 발송 직후 스크린샷이 정상 캡처된다 *(screenshot.py 는 placeholder. PressEnter 직후 캡처 통합 필요)*
+- [x] **테스트 톡방에 `[AI 자동 팔로우업] 테스트` 메시지를 5회 연속 발송 성공** (실패 0회) *(2026-05-23, "나와의 채팅" 대상, tab_mode=chats + open_method=double_click 으로 5/5 성공)*
+- [x] 일부러 잘못된 톡방명을 줬을 때 **3중 방어 중 한 곳에서 차단** (오발송 0) *(단위 테스트로는 통과 — `test_kakao_sender.py::test_any_pre_send_failure_blocks_typing` 4개 케이스. 실 발송 검증도 단계적 실패 사례로 확인됨 — 잘못된 친구 탭에서 시작 시 ensure_friends_tab/open_chatroom 단계에서 차단)*
+- [ ] 발송 직후 스크린샷이 정상 캡처된다 *(screenshot.py 는 placeholder. PressEnter 직후 캡처 통합은 Phase 5 운영 단계에서 추가)*
 - [x] 각 Step 별 단위 테스트 작성 (모킹된 HWND/UIA로) *(2026-05-23, **124 passed** — hwnd_utils 10 + window_spec 21 + steps 12 + kakao_sender 9 + 기존 72)*
 
 **위험 / 주의**
@@ -302,3 +303,4 @@ Phase 2 끝났다는 신호 = "테스트 톡방에 `[AI 자동 팔로우업] 테
 | 2026-05-23 | Phase 1 완료. 코드 골조·Mock 구현·검증 4종 통과. §6 체크리스트를 Phase 2 준비로 갱신. |
 | 2026-05-23 | Phase 2 `investigate.py` 코드 작성 완료 (본인 PC 실 실행 대기). Phase 3 mock 가능 부분 완료 — 카톡 파서·SQLite·Whitelist·Extractor·Scheduler·Watcher·Notifier. pytest 70 passed. |
 | 2026-05-23 | Phase 2 본구현 완료 — hwnd_utils + window_spec + Step 6개 + kakao_sender 오케스트레이션. WindowSpec 본인 환경 실측 기본값 확정. pytest **124 passed**. 실 카톡 발송 검증은 본인 PC 별도 단계. |
+| 2026-05-23 | **Phase 2 완료 기준 달성** — "나와의 채팅" 대상 5/5 발송 성공. 핵심 실측 결과: 본인을 검색하려면 **친구 탭이 아니라 채팅 탭**에서 본명으로, **Alt+Enter 가 아니라 더블클릭**으로 별도 창 오픈. 코드에 양쪽 케이스 모두 옵션화. |

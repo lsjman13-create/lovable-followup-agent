@@ -19,8 +19,10 @@ log = logging.getLogger(__name__)
 KAKAO_WINDOW_CLASS = "EVA_Window_Dblclk"
 MAIN_WINDOW_TITLE = "카카오톡"
 FRIEND_TAB_PREFIX = "ContactListView_"
+CHATS_TAB_PREFIX = "ChatRoomListView_"
 KAKAO_PROCESS_NAME = "KakaoTalk.exe"
 STANDARD_EDIT_CLASS = "Edit"
+LIST_CONTROL_CLASS = "EVA_VH_ListControl_Dblclk"
 
 
 def matches_hwnd(spec: WindowSpec, hwnd: int) -> bool:
@@ -96,27 +98,50 @@ def find_chat_by_title(title_exact: str, exclude: set[int] | None = None) -> int
     return None
 
 
+def _find_visible_tab_view(main_hwnd: int, prefixes: tuple[str, ...]) -> int | None:
+    """메인 창 자식 중 prefixes 로 시작하는 visible 한 첫 View HWND."""
+    for child, _cls, title, _rect, visible in hwnd_utils.list_children(main_hwnd):
+        if visible and any(title.startswith(p) for p in prefixes):
+            return child
+    return None
+
+
 def is_friends_tab_active(main_hwnd: int) -> bool:
-    """메인 창에서 친구 탭이 활성인지 — visible 한 ContactListView_* 자식 존재 여부."""
-    for _child, _cls, title, _rect, visible in hwnd_utils.list_children(main_hwnd):
-        if visible and title.startswith(FRIEND_TAB_PREFIX):
-            return True
-    return False
+    """친구 탭이 활성인지 — visible ContactListView_* 존재 여부."""
+    return _find_visible_tab_view(main_hwnd, (FRIEND_TAB_PREFIX,)) is not None
+
+
+def is_chats_tab_active(main_hwnd: int) -> bool:
+    """채팅 탭이 활성인지 — visible ChatRoomListView_* 존재 여부."""
+    return _find_visible_tab_view(main_hwnd, (CHATS_TAB_PREFIX,)) is not None
 
 
 def find_friend_tab_search_edit(main_hwnd: int) -> int | None:
     """친구 탭의 검색 Edit HWND. 친구 탭이 비활성이면 None."""
-    # 1) visible 한 ContactListView_* 찾기
-    contact_view: int | None = None
-    for child, _cls, title, _rect, visible in hwnd_utils.list_children(main_hwnd):
-        if visible and title.startswith(FRIEND_TAB_PREFIX):
-            contact_view = child
-            break
-    if contact_view is None:
+    view = _find_visible_tab_view(main_hwnd, (FRIEND_TAB_PREFIX,))
+    if view is None:
         return None
+    return hwnd_utils.find_first_child_by_class(view, STANDARD_EDIT_CLASS)
 
-    # 2) 그 안의 첫 표준 Edit
-    return hwnd_utils.find_first_child_by_class(contact_view, STANDARD_EDIT_CLASS)
+
+def find_search_edit_in_active_tab(main_hwnd: int) -> int | None:
+    """현재 활성 탭(친구 또는 채팅)의 검색 Edit HWND.
+
+    카톡 PC 의 친구 검색에는 본인이 안 잡히고 채팅 탭 검색에서만 잡히는 경우가
+    있어, 양쪽 탭 모두에서 검색할 수 있게 활성 탭 자동 감지.
+    """
+    view = _find_visible_tab_view(main_hwnd, (FRIEND_TAB_PREFIX, CHATS_TAB_PREFIX))
+    if view is None:
+        return None
+    return hwnd_utils.find_first_child_by_class(view, STANDARD_EDIT_CLASS)
+
+
+def find_active_list_control(main_hwnd: int) -> int | None:
+    """현재 활성 탭의 친구/채팅 목록 컨트롤 (EVA_VH_ListControl_Dblclk) HWND."""
+    view = _find_visible_tab_view(main_hwnd, (FRIEND_TAB_PREFIX, CHATS_TAB_PREFIX))
+    if view is None:
+        return None
+    return hwnd_utils.find_first_child_by_class(view, LIST_CONTROL_CLASS)
 
 
 def find_richedit_in_chat(chat_hwnd: int, expected_class: str = "RICHEDIT50W") -> int | None:
