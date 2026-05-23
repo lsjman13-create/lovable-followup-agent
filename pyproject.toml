@@ -15,6 +15,9 @@ dependencies = [
     # 카톡 자동화 (Phase 2 이후 실제 사용)
     "pywin32>=308; sys_platform == 'win32'",
     "uiautomation>=2.0; sys_platform == 'win32'",
+    # 카톡 단축키 시뮬레이션 (Ctrl+F, Enter, Alt+Enter) — investigate.py 자동 오픈,
+    # Phase 2 의 카톡 자동화 일부에서 사용. kakao-sender v2 도 동일.
+    "pyautogui>=0.9.54",
     # 프로세스명 조회 (scripts/investigate.py 가 카톡 프로세스 식별에 사용)
     "psutil>=5.9.0",
     # 폴더 감시
@@ -43,6 +46,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["lovable_agent"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"lovable_agent/storage/migrations" = "lovable_agent/storage/migrations"
 
 # ──────────────────────────────────────────────────────────────
 # ruff — lint + format 통합 도구

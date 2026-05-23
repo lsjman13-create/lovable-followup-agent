@@ -63,12 +63,16 @@ class WindowSpec:
 
     동명 톡방·동명이인 오발송 방지를 위해 단순 문자열이 아닌 구조체로 캡슐화.
     실제 win32 매칭 로직은 Phase 2에서 output/window_spec.py에 구현.
+
+    기본값은 **2026-05-23 본인 PC 실측** 으로 확정 (`scripts/investigate.py` 결과,
+    `docs/investigation-2026-05-23.md`). kakao-sender v2 의 가정과 완전 일치.
     """
 
-    title_exact: str  # 채팅창 제목 (완전일치)
-    class_name: str = "EVA_ChildWindow"  # Phase 2 실측 후 확정
+    title_exact: str  # 채팅창 제목 (완전일치) — 동명이인 오발송 방지
+    class_name: str = "EVA_Window_Dblclk"  # 채팅창 top-level 클래스 (메인 창과 동일)
     process_name: str = "KakaoTalk.exe"
-    expected_input_class: str = "RICHEDIT50W"
+    expected_input_class: str = "RICHEDIT50W"  # 메시지 입력창 자식 클래스
+    expected_list_class: str = "EVA_VH_ListControl_Dblclk"  # 메시지 리스트 자식 클래스
 
 
 @dataclass
