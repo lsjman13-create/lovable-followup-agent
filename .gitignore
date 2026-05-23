@@ -73,6 +73,10 @@ inbox/
 *.kakao.txt
 KakaoTalk_*.txt
 
+# 카톡 HWND/UIA 진단 결과 (채팅창 제목에 톡방명·사람 이름 포함 가능)
+docs/investigation-*.md
+docs/investigation-result*.md
+
 # 발송 스크린샷 임시 (운영 중 자동 삭제되나 혹시 모르니)
 screenshots/
 *.screenshot.png
