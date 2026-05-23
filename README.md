@@ -174,8 +174,8 @@ lovable-followup-agent/
 | **Phase 1** | 2026-05-23 ✅ | 코드 골조 완성: `pyproject.toml`(uv 기반) + `lovable_agent/` 패키지 트리 + `LLMClient` Protocol + `MockLLMClient` + `MockNotionRepository` + `main.py --dry-run`. 검증 4종 통과 — `uv sync` ✓ / `pytest 8 passed` ✓ / `ruff check` ✓ / `--dry-run` 한 사이클 정상 종료 ✓. 외부 호출 0건. |
 | **Phase 2** | 2026-05-23 ✅ **완료** | `scripts/investigate.py` + `--auto-open-self-chat` + 본인 PC 실측 (RICHEDIT50W·EVA_Window_Dblclk·EVA_VH_ListControl_Dblclk 확인) → `hwnd_utils.py` + `window_spec.py` + Step 6개 (3중 방어 포함) + `kakao_sender.py` 오케스트레이션. pytest **124 passed**. `scripts/send_test.py` 로 "나와의 채팅" **5/5 발송 성공**. 본인 환경 실측: 친구 탭이 아니라 **채팅 탭에서 검색** + Alt+Enter 가 아니라 **더블클릭(WM_LBUTTONDBLCLK)** 으로 별도 창 오픈 — 둘 다 옵션화. |
 | **Phase 3** | 2026-05-23 ✅ **완료** | 분석·저장 로직 + Phase 2 통합 — 카톡 .txt 파서, Extractor, SQLite 저장소(+migrations), 6시간 룰 스케줄러, 화이트리스트 더블체크, 폴더 watcher, Notifier, **SendDispatcher**(발송 큐 ↔ KakaoSender 연결). pytest **133 passed**, `--dry-run` 7단계 통합 흐름 검증. |
-| **Phase 4** | 예정 | 외부 연결 — 처음으로 Anthropic API + Notion API 실호출. 회사 노션 정책 확인 → Integration 생성 → 3개 DB 생성 → mock → real 갈아끼움. PLAN §3.4. |
-| **Phase 5** | 예정 | 통합·안전장치·운영 시작. NFR-1 Sev-1 4종 검증 + Windows 작업 스케줄러 등록 + 1개월 운영 후 PRD §8 성공 지표 평가. PLAN §3.5. |
+| **Phase 4** | 2026-05-24 ✅ | 노션 부분: setup_notion.py 로 DB 3개 자동 생성·schema 적용 + 실 노션 통합 검증. Anthropic API 키 대신 **ClaudeCLIClient (`claude -p`)** 로 우회 (API 키 없이 실 AI 분석). |
+| **Phase 5** | 2026-05-24 ✅ (코드), 사용자 1회 실행 대기 | 운영 데몬 (`main.py` 매 분 polling + 발송 루프, Ctrl+C 우아한 종료, 파일 로그 회전). `install_startup.py` 로 시작 프로그램 폴더에 .bat 자동 등록 (Task Scheduler 대신 단순화). 본인이 `install_startup.py` 1회 실행 + PC 재부팅하면 운영 진입. |
 
 각 Phase가 종료되는 시점에 본 표에 **완료 날짜**와 **실측 결과**를 채워 누적 기록한다.
 

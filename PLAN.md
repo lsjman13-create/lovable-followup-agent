@@ -27,6 +27,8 @@
 - ✅ **Phase 3 실 AI 분석 검증** (2026-05-23): `process/claude_cli_client.py` 신규 — `claude -p` 비대화형 호출로 Anthropic API 키 없이 LLMClient Protocol 구현. `scripts/analyze_kakao.py` 로 실 카톡 .txt (91 메시지) 분석 → **17초만에 1건 정확 추출** (잡담 90건 자동 무시, context·assignee·due_date 정확). pytest **144 passed** (+11 ClaudeCLI). DECISIONS §8.2 "Claude Code 환경 직접 운영" 옵션 부분 실현.
 - ✅ **Phase 4 Notion 부분 — 코드 작성 완료** (2026-05-23): `storage/notion_repo.py` 실 API 구현 + `scripts/setup_notion.py` 1회 DB 자동 생성 도구. notion-client mock 단위 테스트 19개. pytest **163 passed** (+19).
 - ✅ **Phase 4 Notion 실 통합 검증** (2026-05-24): 사용자 토큰 + 부모 페이지로 setup 실행, DB 3개 생성. **notion-client 3.x API 변경 대응**: (1) `databases.query` → `data_sources.query` 로 이전. (2) DB 생성이 2단계 (빈 DB → `data_sources.update` 로 schema). 실 노션에 `add_task` → `list_active_tasks` 왕복 검증 성공. Phase 4 노션 부분 완전 통합.
+- ✅ **진정한 e2e 통합 검증** (2026-05-24): `scripts/integration_e2e.py` — Mock 0개. 실 카톡 .txt 91 메시지 → 실 Claude CLI (22.6초, 3건 추출, 모두 중복 정확 식별) → 실 노션 add_task + patch → ReminderScheduler.tick (6시간 룰 정상) → 실 KakaoSender (6 Step 통과) → 본인 카톡 발송 성공. PRD 의 모든 흐름이 실 환경에서 한 번에 흐름.
+- ✅ **Phase 5 운영 데몬 코드 완성** (2026-05-24): `main.py` 에 운영 모드 (`_run_daemon`) 추가 — 매 분 Scheduler.tick + Dispatcher, 매 5분 Inbox 폴링, Ctrl+C 우아한 종료, 파일 로그 회전. `scripts/install_startup.py` — Windows 시작 프로그램 폴더에 `lovable-agent.bat` 자동 등록 (Task Scheduler 보다 단순 — 사용자 선택). 사용자가 setup_startup 1회 실행 + PC 재부팅하면 운영 진입.
 - ✅ **Phase 3 (mock 가능 부분) — 분석·저장 로직** (2026-05-23): 카톡 파서 + SQLite + Whitelist 더블체크 + Extractor + Scheduler(6시간 룰) + Watcher + Notifier. pytest **70 passed**, dry-run 6단계 통합 흐름.
 - ⏳ 다음 — Phase 2 의 본인 PC 카톡 점검 + 자동화 Step 들 구현, 그 다음에야 발송 통합 검증 가능.
 
@@ -312,3 +314,4 @@ Phase 2 끝났다는 신호 = "테스트 톡방에 `[AI 자동 팔로우업] 테
 | 2026-05-23 | **Phase 3 실 AI 분석 검증** — ClaudeCLIClient 로 실 카톡 .txt 91 메시지 → 17초만에 actionable 업무 1건 정확 추출. Anthropic API 키 없이 동작. Phase 4 안 거치고도 Phase 3 흐름 검증 완료. pytest 144 passed. |
 | 2026-05-23 | **Phase 4 Notion 코드 완성** — notion_repo.py + setup_notion.py + 단위 테스트. 사용자가 토큰 발급 + 부모 페이지 결정 + setup 1회 실행만 남음. Inbox 를 ARCHITECTURE 의 "페이지" 가 아니라 DB 로 결정. pytest 163 passed. |
 | 2026-05-24 | **Phase 4 Notion 실 통합 검증** — 사용자 토큰으로 DB 3개 생성·schema 적용·왕복 쿼리 성공. notion-client 3.x API 변경 (databases.query → data_sources.query, DB schema 는 data_sources.update 로 2단계) 대응. |
+| 2026-05-24 | **진정한 e2e + Phase 5 운영 데몬 코드 완성** — integration_e2e.py 로 mock 0개 통합 검증, main.py 운영 루프 (매 분 polling + 발송, Ctrl+C 우아한 종료, 파일 로그). install_startup.py 로 시작 프로그램 폴더 .bat 자동 등록. 사용자 1회 실행만 남음. |

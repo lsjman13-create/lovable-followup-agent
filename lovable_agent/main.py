@@ -1,18 +1,24 @@
 """엔트리포인트.
 
 사용법:
-    uv run python -m lovable_agent --dry-run    # mock 의존성으로 한 사이클
-    uv run python -m lovable_agent              # 실 운영 (Phase 4 이후)
+    uv run python -m lovable_agent --dry-run    # mock 의존성으로 한 사이클 후 종료
+    uv run python -m lovable_agent              # 운영 모드 — 매 분 polling + 발송 루프
 
---dry-run 은 외부 호출 없이 다음 통합 흐름을 수행하고 종료:
+운영 모드 (`--dry-run` 미지정):
+- 실 ClaudeCLI, 실 NotionRepository, 실 KakaoSender
+- 매 `reminder_check_interval_seconds` (기본 60초) 마다 Scheduler.tick + Dispatcher
+- 매 `notion_poll_interval_seconds` (기본 300초) 마다 Notion Inbox 폴링 + Extractor
+- Ctrl+C 또는 SIGTERM 으로 우아한 종료
+- 파일 로그: ~/lovable-agent/logs/agent.log (회전 10개)
+
+--dry-run 은 외부 호출 없이 다음 통합 흐름을 수행하고 종료 (Phase 3 검증용):
 
 1. 가짜 카톡 .txt 텍스트 준비 → 카톡 파서로 메시지 분리
 2. mock LLM + mock Notion 으로 4요소 추출 + 노션(가짜) 저장
 3. SQLite(인메모리) 발송 큐 초기화
 4. WhitelistChecker 로 톡방 검증
 5. ReminderScheduler.tick 으로 due 도래 항목 enqueue
-6. **SendDispatcher.dispatch_pending — 발송 큐 → mock KakaoSender 호출**
-   send_history 기록 + 큐 상태 갱신 (실 카톡 발송 X)
+6. SendDispatcher.dispatch_pending — 발송 큐 → mock KakaoSender 호출
 7. Notifier 로 결과 알림 (실제 토스트는 Windows 에서만)
 """
 
@@ -20,19 +26,32 @@ from __future__ import annotations
 
 import argparse
 import logging
+import logging.handlers
+import os
+import signal
 import sys
+import time
+from pathlib import Path
 
-from lovable_agent.config import load_config
+from lovable_agent.config import Config, load_config
 from lovable_agent.domain import WindowSpec
 from lovable_agent.ingest.kakao_parser import format_for_llm, parse_kakao_text
-from lovable_agent.output.kakao_sender import SendResult
+from lovable_agent.output.kakao_sender import KakaoSender, SendResult
 from lovable_agent.output.notifier import Notifier
 from lovable_agent.output.send_dispatcher import SendDispatcher
+from lovable_agent.output.steps.ensure_friends_tab import EnsureFriendsTabStep
+from lovable_agent.output.steps.open_chatroom import OpenChatroomStep
+from lovable_agent.output.steps.press_enter import PressEnterStep
+from lovable_agent.output.steps.snapshot_hwnds import SnapshotHwndsStep
+from lovable_agent.output.steps.type_message import TypeMessageStep
+from lovable_agent.output.steps.verify_chatroom_title import VerifyChatroomTitleStep
+from lovable_agent.process.claude_cli_client import ClaudeCLIClient
 from lovable_agent.process.extractor import TaskExtractor
 from lovable_agent.process.mock_client import MockLLMClient
 from lovable_agent.safety.whitelist import WhitelistChecker
 from lovable_agent.scheduling.scheduler import ReminderScheduler
 from lovable_agent.storage.mock_notion_repo import MockNotionRepository
+from lovable_agent.storage.notion_repo import NotionRepository
 from lovable_agent.storage.sqlite_repo import SqliteRepository
 
 log = logging.getLogger("lovable_agent")
@@ -41,12 +60,25 @@ log = logging.getLogger("lovable_agent")
 # ──────────────────────────────────────────────────────────────
 # Logging
 # ──────────────────────────────────────────────────────────────
-def _setup_logging(verbose: bool) -> None:
+def _setup_logging(verbose: bool, log_file: Path | None = None) -> None:
     level = logging.DEBUG if verbose else logging.INFO
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        # 일자별 회전, 10개 보존
+        file_handler = logging.handlers.TimedRotatingFileHandler(
+            filename=str(log_file),
+            when="midnight",
+            backupCount=10,
+            encoding="utf-8",
+        )
+        handlers.append(file_handler)
     logging.basicConfig(
         level=level,
         format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-        datefmt="%H:%M:%S",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=handlers,
+        force=True,
     )
 
 
@@ -186,15 +218,176 @@ def _run_dry_cycle(config) -> int:
         sqlite.close()
 
 
+# ──────────────────────────────────────────────────────────────
+# 운영 데몬 — 실 환경 백그라운드 루프
+# ──────────────────────────────────────────────────────────────
+_stop_requested = False
+
+
+def _request_stop(signum: int, _frame: object) -> None:
+    """SIGINT/SIGTERM 핸들러 — 다음 루프 반복에서 우아한 종료."""
+    global _stop_requested
+    _stop_requested = True
+    log.info("종료 신호 수신 (signum=%d). 현재 사이클 완료 후 종료합니다…", signum)
+
+
+def _build_real_kakao_sender() -> KakaoSender:
+    """본인 환경 정답 조합 (tab=chats, open=double_click) — 운영 기본값."""
+    return KakaoSender(
+        steps=[
+            EnsureFriendsTabStep(expected_tab="chats"),
+            SnapshotHwndsStep(),
+            OpenChatroomStep(open_method="double_click"),
+            VerifyChatroomTitleStep(),
+            TypeMessageStep(),
+            PressEnterStep(),
+        ]
+    )
+
+
+def _run_daemon(config: Config) -> int:
+    """운영 모드 — 매 분 polling + 발송 루프. Ctrl+C 로 우아한 종료."""
+    log.info("=" * 60)
+    log.info("운영 데몬 시작")
+    log.info("=" * 60)
+
+    # ── 의존성 검증 ──
+    token = os.environ.get(config.notion.api_token_env, "")
+    if not token:
+        log.error("환경변수 %s 미등록 — 운영 시작 불가", config.notion.api_token_env)
+        return 2
+    if not config.notion.tasks_db_id:
+        log.error("config.notion.tasks_db_id 비어있음 — setup_notion.py 먼저 실행")
+        return 2
+
+    # ── 실 의존성 와이어링 ──
+    db_path = Path(config.paths.db_path).expanduser()
+    log.info("SQLite: %s", db_path)
+    sqlite = SqliteRepository(db_path)
+
+    notion = NotionRepository(
+        token=token,
+        tasks_db_id=config.notion.tasks_db_id,
+        whitelist_db_id=config.notion.whitelist_db_id,
+        inbox_db_id=config.notion.inbox_page_id,
+    )
+    log.info("Notion: 연결 완료 (tasks/whitelist/inbox DB)")
+
+    llm = ClaudeCLIClient()
+    extractor = TaskExtractor(llm=llm, repo=notion)
+    log.info("LLM: ClaudeCLI")
+
+    scheduler = ReminderScheduler(
+        notion=notion,
+        sqlite=sqlite,
+        message_prefix=config.safety.message_prefix,
+        offsets_hours=config.scheduling.default_reminder_offsets_hours,
+        late_threshold_hours=config.scheduling.late_reminder_threshold_hours,
+    )
+    notifier = Notifier()
+    sender = _build_real_kakao_sender()
+    dispatcher = SendDispatcher(sqlite=sqlite, sender=sender, notifier=notifier)
+
+    # ── 신호 핸들러 등록 ──
+    signal.signal(signal.SIGINT, _request_stop)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _request_stop)
+
+    # ── 메인 루프 ──
+    reminder_interval = config.scheduling.reminder_check_interval_seconds
+    notion_poll_interval = config.scheduling.notion_poll_interval_seconds
+    last_inbox_poll = 0.0
+    cycle = 0
+
+    log.info(
+        "메인 루프 시작 — reminder=%ds, inbox=%ds. Ctrl+C 로 종료.",
+        reminder_interval,
+        notion_poll_interval,
+    )
+
+    try:
+        while not _stop_requested:
+            cycle += 1
+            now = time.monotonic()
+
+            # 1) Inbox 폴링 (느린 주기)
+            if now - last_inbox_poll >= notion_poll_interval:
+                _process_inbox_once(notion, extractor)
+                last_inbox_poll = now
+
+            # 2) Scheduler.tick — 확정 업무 → 발송 큐
+            try:
+                tick = scheduler.tick()
+                if tick.enqueued or tick.skipped_too_late:
+                    log.info(
+                        "[cycle %d] Scheduler — enqueued=%d, skipped=%d",
+                        cycle,
+                        tick.enqueued,
+                        tick.skipped_too_late,
+                    )
+            except Exception:
+                log.exception("[cycle %d] Scheduler.tick 실패 — 계속 진행", cycle)
+
+            # 3) Dispatcher — 발송 큐 처리
+            try:
+                outcome = dispatcher.dispatch_pending()
+                if outcome.attempted:
+                    log.info(
+                        "[cycle %d] Dispatcher — attempted=%d, succeeded=%d, failed=%d",
+                        cycle,
+                        outcome.attempted,
+                        outcome.succeeded,
+                        outcome.failed,
+                    )
+            except Exception:
+                log.exception("[cycle %d] Dispatcher 실패 — 계속 진행", cycle)
+
+            # 4) 다음 사이클 대기 — 중단 시 조기 종료
+            for _ in range(reminder_interval):
+                if _stop_requested:
+                    break
+                time.sleep(1.0)
+    finally:
+        sqlite.close()
+        log.info("=" * 60)
+        log.info("운영 데몬 종료 — %d cycles 실행", cycle)
+        log.info("=" * 60)
+    return 0
+
+
+def _process_inbox_once(notion: NotionRepository, extractor: TaskExtractor) -> None:
+    """Inbox DB 의 미처리 메모들을 한 번에 처리."""
+    try:
+        memos = notion.fetch_new_inbox_memos()
+    except Exception:
+        log.exception("Inbox 폴링 실패 — 다음 사이클에서 재시도")
+        return
+    if not memos:
+        return
+    log.info("Inbox — 새 메모 %d건 처리 시작", len(memos))
+    for memo_id, text in memos:
+        try:
+            outcome = extractor.process_text(text, source_label=f"inbox:{memo_id[:8]}")
+            log.info(
+                "Inbox [%s] — 신규 %d / 중복 %d",
+                memo_id[:8],
+                len(outcome.new_task_ids),
+                len(outcome.merged_task_ids),
+            )
+            notion.mark_inbox_memo_processed(memo_id)
+        except Exception:
+            log.exception("Inbox [%s] 처리 실패 — 다음 사이클에서 재시도", memo_id[:8])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="lovable_agent",
-        description="Lovable 업무 팔로업 에이전트 (MVP)",
+        description="Lovable 업무 팔로업 에이전트",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="외부 호출 없이 mock 의존성으로 한 사이클 실행 후 종료 (Phase 1~3)",
+        help="외부 호출 없이 mock 의존성으로 한 사이클 실행 후 종료",
     )
     parser.add_argument("--verbose", action="store_true", help="DEBUG 로그 출력")
     parser.add_argument(
@@ -203,16 +396,25 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="config.toml 경로 (기본: 프로젝트 루트의 config.toml)",
     )
+    parser.add_argument(
+        "--no-log-file",
+        action="store_true",
+        help="파일 로깅 비활성화 (운영 모드에서만 영향)",
+    )
     args = parser.parse_args(argv)
 
-    _setup_logging(args.verbose)
     config = load_config(args.config)
+
+    # 파일 로그 경로 — 운영 모드일 때만 활성화
+    log_file: Path | None = None
+    if not args.dry_run and not args.no_log_file:
+        log_file = Path(config.paths.db_path).expanduser().parent / "logs" / "agent.log"
+
+    _setup_logging(args.verbose, log_file=log_file)
 
     if args.dry_run:
         return _run_dry_cycle(config)
-
-    log.error("실 운영 모드는 Phase 4 에서 구현됩니다. 지금은 --dry-run 을 사용하세요.")
-    return 2
+    return _run_daemon(config)
 
 
 if __name__ == "__main__":
