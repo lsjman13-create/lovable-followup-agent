@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from lovable_agent.domain import TaskStatus, TaskSummary
 from lovable_agent.process.llm_client import LLMClient
 from lovable_agent.storage.repository import NotionRepository
 
@@ -53,6 +54,20 @@ class TaskExtractor:
         self._repo = repo
         self._max_input_chars = max_input_chars
 
+    def _chunk_text(self, text: str) -> list[str]:
+        if not self._max_input_chars or len(text) <= self._max_input_chars:
+            return [text]
+        chunks = []
+        while len(text) > self._max_input_chars:
+            cutoff = text.rfind("\n", 0, self._max_input_chars)
+            if cutoff <= 0:
+                cutoff = self._max_input_chars
+            chunks.append(text[:cutoff])
+            text = text[cutoff:].lstrip("\n")
+        if text:
+            chunks.append(text)
+        return chunks
+
     def process_text(self, text: str, source_label: str = "") -> ExtractionOutcome:
         """비정형 텍스트 → 노션 업무로 동기화.
 
@@ -67,54 +82,71 @@ class TaskExtractor:
             log.info("Extractor — 빈 텍스트, 스킵")
             return ExtractionOutcome([], [], 0)
 
-        original_len = len(text)
-        if self._max_input_chars is not None and original_len > self._max_input_chars:
-            cutoff = text.rfind("\n", 0, self._max_input_chars)
-            if cutoff <= 0:
-                cutoff = self._max_input_chars
-            text = text[:cutoff]
-            log.warning(
-                "Extractor — 입력 %d자 > 상한 %d자, 절단 후 %d자로 처리 (출처: %s). "
-                "끝부분 메시지는 이번 사이클에서 누락됨.",
-                original_len,
-                self._max_input_chars,
+        chunks = self._chunk_text(text)
+        if len(chunks) > 1:
+            log.info(
+                "Extractor — 입력 %d자 > 상한 %d자, 총 %d개의 청크로 분할하여 처리 (출처: %s).",
                 len(text),
+                self._max_input_chars,
+                len(chunks),
                 source_label or "?",
             )
 
         existing = self._repo.list_active_tasks()
-        log.info(
-            "Extractor — 기존 진행중 업무 %d개와 함께 LLM 호출 (출처: %s, %d자)",
-            len(existing),
-            source_label or "?",
-            len(text),
-        )
-
-        result = self._llm.extract_tasks(text, existing)
-        log.info("Extractor — LLM 응답 %d건 (중복 포함)", len(result.tasks))
-
+        
         new_ids: list[str] = []
         merged_ids: list[str] = []
+        raw_extracted_count = 0
 
-        for task in result.tasks:
-            if task.is_duplicate_of:
-                # 기존 업무에 맥락 추가
-                note = f"[자동] {task.context or task.what}"
-                self._repo.append_task_note(task.is_duplicate_of, note)
-                merged_ids.append(task.is_duplicate_of)
-                log.info("  → 중복 감지: 기존 %s 에 메모 추가", task.is_duplicate_of[:8])
+        for idx, chunk in enumerate(chunks, 1):
+            if len(chunks) > 1:
+                log.info("Extractor — 청크 %d/%d 처리 중... (크기: %d자)", idx, len(chunks), len(chunk))
             else:
-                new_id = self._repo.add_task(task)
-                new_ids.append(new_id)
                 log.info(
-                    "  → 신규: %s (담당: %s, 마감: %s)",
-                    task.title,
-                    task.assignee,
-                    task.due_date.isoformat() if task.due_date else "미정",
+                    "Extractor — 기존 진행중 업무 %d개와 함께 LLM 호출 (출처: %s, %d자)",
+                    len(existing),
+                    source_label or "?",
+                    len(chunk),
                 )
+
+            result = self._llm.extract_tasks(chunk, existing)
+            raw_extracted_count += len(result.tasks)
+            
+            if len(chunks) > 1:
+                log.info("Extractor — 청크 %d/%d LLM 응답 %d건 (중복 포함)", idx, len(chunks), len(result.tasks))
+            else:
+                log.info("Extractor — LLM 응답 %d건 (중복 포함)", len(result.tasks))
+
+            for task in result.tasks:
+                if task.is_duplicate_of:
+                    # 기존 업무에 맥락 추가
+                    note = f"[자동] {task.context or task.what}"
+                    self._repo.append_task_note(task.is_duplicate_of, note)
+                    merged_ids.append(task.is_duplicate_of)
+                    log.info("  → 중복 감지: 기존 %s 에 메모 추가", task.is_duplicate_of[:8])
+                else:
+                    new_id = self._repo.add_task(task)
+                    new_ids.append(new_id)
+                    log.info(
+                        "  → 신규: %s (담당: %s, 마감: %s)",
+                        task.title,
+                        task.assignee,
+                        task.due_date.isoformat() if task.due_date else "미정",
+                    )
+                    # 방금 추가한 신규 업무를 existing 리스트에 편입 (다음 청크에서 중복 인지 가능하도록)
+                    existing.append(
+                        TaskSummary(
+                            task_id=new_id,
+                            title=task.title,
+                            assignee=task.assignee,
+                            due_date=task.due_date,
+                            one_line_summary=task.what,
+                            status=TaskStatus.REVIEW_PENDING,
+                        )
+                    )
 
         return ExtractionOutcome(
             new_task_ids=new_ids,
             merged_task_ids=merged_ids,
-            raw_extracted_count=len(result.tasks),
+            raw_extracted_count=raw_extracted_count,
         )

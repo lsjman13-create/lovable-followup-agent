@@ -98,20 +98,19 @@ def test_llm_receives_existing_tasks_as_context(notion):
     assert all(isinstance(t, TaskSummary) for t in existing_passed)
 
 
-def test_truncates_input_longer_than_max_input_chars(notion):
-    """max_input_chars 초과 시 마지막 줄바꿈 기준으로 절단되어야 한다."""
+def test_chunks_input_longer_than_max_input_chars(notion):
+    """max_input_chars 초과 시 마지막 줄바꿈 기준으로 청크 분할되어 여러 번 LLM이 호출되어야 한다."""
     llm = FakeLLM(ExtractionResult([]))
     extractor = TaskExtractor(llm=llm, repo=notion, max_input_chars=100)
 
-    # 50자 줄 * 4개 = 200자 (줄바꿈 포함)
+    # 50자 줄 * 4개 = 200자 (줄바꿈 포함) -> 최대 100자이므로 총 4번의 청크가 발생
     long_text = "\n".join(["가" * 50] * 4)
     extractor.process_text(long_text, source_label="긴 입력")
 
-    assert len(llm.calls) == 1
-    text_passed = llm.calls[0][0]
-    assert len(text_passed) <= 100
-    # 마지막 글자가 줄 중간이 아니라 줄바꿈 직전까지여야 함
-    assert text_passed.endswith("가" * 50) or text_passed == "가" * 50
+    assert len(llm.calls) == 4
+    for text_passed, _ in llm.calls:
+        assert len(text_passed) <= 100
+        assert text_passed == "가" * 50
 
 
 def test_no_truncation_when_max_input_chars_unset(notion):
