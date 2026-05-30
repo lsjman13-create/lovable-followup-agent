@@ -361,7 +361,7 @@ def _run_daemon(config: Config) -> int:
 
             # 1) Inbox 폴링 (느린 주기)
             if now - last_inbox_poll >= notion_poll_interval:
-                _process_inbox_once(notion, extractor, notifier)
+                _process_inbox_once(notion, extractor, notifier, sqlite)
                 last_inbox_poll = now
 
             # 2) Scheduler.tick — 확정 업무 → 발송 큐
@@ -406,7 +406,7 @@ def _run_daemon(config: Config) -> int:
     return 0
 
 
-def _process_inbox_once(notion: NotionRepository, extractor: TaskExtractor, notifier: Notifier) -> None:
+def _process_inbox_once(notion: NotionRepository, extractor: TaskExtractor, notifier: Notifier, sqlite: SqliteRepository) -> None:
     """Inbox DB 의 미처리 메모들을 한 번에 처리."""
     try:
         memos = notion.fetch_new_inbox_memos()
@@ -419,7 +419,32 @@ def _process_inbox_once(notion: NotionRepository, extractor: TaskExtractor, noti
     log.info("Inbox — 새 메모 %d건 처리 시작", len(memos))
     for memo_id, text in memos:
         try:
-            outcome = extractor.process_text(text, source_label=f"inbox:{memo_id[:8]}")
+            # 카톡 파서를 통한 해시 기반 중복 필터링
+            msgs = parse_kakao_text(text)
+            hashes_to_mark = []
+            if msgs:
+                all_hashes = [m.message_hash for m in msgs]
+                new_hashes_set = set(sqlite.filter_new_messages(all_hashes))
+                
+                new_msgs = [m for m in msgs if m.message_hash in new_hashes_set]
+                
+                if not new_msgs:
+                    log.info("Inbox [%s] — 중복 대화만 존재하여 분석을 건너뜁니다.", memo_id[:8])
+                    notion.mark_inbox_memo_processed(memo_id)
+                    continue
+                
+                log.info("Inbox [%s] — 총 %d개 메시지 중 새로운 메시지 %d건만 분석 진행", memo_id[:8], len(msgs), len(new_msgs))
+                text_to_process = format_for_llm(new_msgs, max_messages=0)
+                hashes_to_mark = [m.message_hash for m in new_msgs]
+            else:
+                # 카톡 포맷이 아닌 일반 메모
+                text_to_process = text
+                
+            outcome = extractor.process_text(text_to_process, source_label=f"inbox:{memo_id[:8]}")
+            
+            if hashes_to_mark:
+                sqlite.mark_messages_processed(hashes_to_mark)
+                
             log.info(
                 "Inbox [%s] — 신규 %d / 중복 %d",
                 memo_id[:8],

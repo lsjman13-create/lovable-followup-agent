@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -59,6 +60,12 @@ class KakaoMessage:
     timestamp: datetime
     speaker: str
     body: str
+
+    @property
+    def message_hash(self) -> str:
+        """메시지 고유 식별 해시 (시간+발화자+내용)."""
+        raw = f"{self.timestamp.isoformat()}|{self.speaker}|{self.body}"
+        return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
 def _ampm_to_24h(ampm: str, hour: int) -> int:
@@ -157,8 +164,8 @@ def parse_kakao_file(path: str | Path) -> list[KakaoMessage]:
     return parse_kakao_text(p.read_text(encoding="utf-8", errors="replace"))
 
 
-def format_for_llm(messages: list[KakaoMessage], max_messages: int = 50) -> str:
-    """LLM 프롬프트에 넣기 좋은 형식으로 직렬화 — 최근 N건만."""
+def format_for_llm(messages: list[KakaoMessage], max_messages: int = 0) -> str:
+    """LLM 프롬프트에 넣기 좋은 형식으로 직렬화. max_messages=0 이면 전체 반환."""
     selected = messages[-max_messages:] if max_messages > 0 else messages
     lines = []
     for m in selected:

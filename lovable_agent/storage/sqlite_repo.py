@@ -122,6 +122,38 @@ class SqliteRepository:
                 (file_hash, file_name, datetime.now()),
             )
 
+    # ─── processed_messages (Deduplication) ───
+    def filter_new_messages(self, hashes: list[str]) -> list[str]:
+        """DB에 없는 새로운 해시 목록만 반환합니다."""
+        if not hashes:
+            return []
+        
+        chunk_size = 900  # SQLite limit
+        existing_hashes = set()
+        
+        with self._conn() as conn:
+            for i in range(0, len(hashes), chunk_size):
+                chunk = hashes[i:i + chunk_size]
+                placeholders = ",".join("?" * len(chunk))
+                rows = conn.execute(
+                    f"SELECT message_hash FROM processed_messages WHERE message_hash IN ({placeholders})",
+                    chunk
+                ).fetchall()
+                existing_hashes.update(row["message_hash"] for row in rows)
+                
+        return [h for h in hashes if h not in existing_hashes]
+
+    def mark_messages_processed(self, hashes: list[str]) -> None:
+        """처리된 해시 목록을 DB에 저장합니다."""
+        if not hashes:
+            return
+        with self._conn() as conn:
+            now = datetime.now()
+            conn.executemany(
+                "INSERT OR IGNORE INTO processed_messages (message_hash, processed_at) VALUES (?, ?)",
+                [(h, now) for h in hashes]
+            )
+
     # ─── send_queue ───
     def enqueue_send(self, item: SendQueueItem) -> int:
         with self._conn() as conn:
