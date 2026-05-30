@@ -20,6 +20,27 @@ class AnthropicConfig:
 
 
 @dataclass(frozen=True)
+class LLMConfig:
+    """LLM 백엔드 선택 — `backend` 가 운영 데몬에서 실제 사용하는 클라이언트를 결정.
+
+    - "claude_cli": Claude Code CLI 비대화형 호출 (외부 전송, 무료, 가입한 플랜 한도 내)
+    - "ollama":     로컬 Ollama 호출 (PII 외부 유출 0, 모델 사전 pull 필요)
+    - "anthropic":  Anthropic API 직접 호출 (api_key_env 필요)
+    - "mock":       오프라인 테스트용 — 운영에선 사용 금지
+    """
+
+    backend: str = "claude_cli"
+    ollama_model: str = "exaone3.5:7.8b"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_timeout_sec: float = 300.0
+    ollama_use_json_format: bool = True
+    # 입력 텍스트 글자 수 상한 (Extractor 에서 절단). 0 이면 무제한.
+    # CPU 기반 Ollama 의 timeout 회피용 — 예: 8000 → llama3:8B 가 4~5분 내 처리.
+    # 품질 trade-off: 끝부분 메시지가 잘림.
+    max_input_chars: int = 0
+
+
+@dataclass(frozen=True)
 class NotionConfig:
     api_token_env: str = "NOTION_API_TOKEN"
     tasks_db_id: str = ""
@@ -67,6 +88,7 @@ class SafetyConfig:
 @dataclass(frozen=True)
 class Config:
     anthropic: AnthropicConfig
+    llm: LLMConfig
     notion: NotionConfig
     paths: PathsConfig
     scheduling: SchedulingConfig
@@ -84,6 +106,7 @@ def load_config(path: str | Path | None = None) -> Config:
     if not cfg_path.exists():
         return Config(
             anthropic=AnthropicConfig(),
+            llm=LLMConfig(),
             notion=NotionConfig(),
             paths=PathsConfig(),
             scheduling=SchedulingConfig(),
@@ -96,6 +119,7 @@ def load_config(path: str | Path | None = None) -> Config:
 
     return Config(
         anthropic=AnthropicConfig(**data.get("anthropic", {})),
+        llm=LLMConfig(**data.get("llm", {})),
         notion=NotionConfig(**data.get("notion", {})),
         paths=PathsConfig(**data.get("paths", {})),
         scheduling=SchedulingConfig(**data.get("scheduling", {})),

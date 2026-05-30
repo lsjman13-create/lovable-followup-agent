@@ -52,7 +52,7 @@ def _bat_content(project_root: Path) -> str:
     """
     return (
         "@echo off\r\n"
-        "rem Lovable Followup Agent — auto-installed by scripts/install_startup.py\r\n"
+        "rem Lovable Followup Agent -- auto-installed by scripts/install_startup.py\r\n"
         "rem 이 파일을 삭제하면 부팅 자동 실행이 해제됩니다.\r\n"
         f'cd /d "{project_root}"\r\n'
         "start /B uv run pythonw -m lovable_agent\r\n"

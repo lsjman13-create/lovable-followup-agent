@@ -98,6 +98,42 @@ def test_llm_receives_existing_tasks_as_context(notion):
     assert all(isinstance(t, TaskSummary) for t in existing_passed)
 
 
+def test_truncates_input_longer_than_max_input_chars(notion):
+    """max_input_chars 초과 시 마지막 줄바꿈 기준으로 절단되어야 한다."""
+    llm = FakeLLM(ExtractionResult([]))
+    extractor = TaskExtractor(llm=llm, repo=notion, max_input_chars=100)
+
+    # 50자 줄 * 4개 = 200자 (줄바꿈 포함)
+    long_text = "\n".join(["가" * 50] * 4)
+    extractor.process_text(long_text, source_label="긴 입력")
+
+    assert len(llm.calls) == 1
+    text_passed = llm.calls[0][0]
+    assert len(text_passed) <= 100
+    # 마지막 글자가 줄 중간이 아니라 줄바꿈 직전까지여야 함
+    assert text_passed.endswith("가" * 50) or text_passed == "가" * 50
+
+
+def test_no_truncation_when_max_input_chars_unset(notion):
+    """max_input_chars 미설정(None)이면 입력 그대로 통과."""
+    llm = FakeLLM(ExtractionResult([]))
+    extractor = TaskExtractor(llm=llm, repo=notion)
+
+    long_text = "가" * 10000
+    extractor.process_text(long_text)
+    assert llm.calls[0][0] == long_text
+
+
+def test_no_truncation_when_input_under_limit(notion):
+    """상한 미만 입력은 절단 없음."""
+    llm = FakeLLM(ExtractionResult([]))
+    extractor = TaskExtractor(llm=llm, repo=notion, max_input_chars=1000)
+
+    text = "짧은 텍스트"
+    extractor.process_text(text)
+    assert llm.calls[0][0] == text
+
+
 def test_mixed_new_and_duplicate_in_one_call(notion):
     existing = notion.list_active_tasks()
     target_id = existing[0].task_id

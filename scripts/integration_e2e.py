@@ -50,6 +50,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from lovable_agent.config import load_config  # noqa: E402
 from lovable_agent.domain import TaskStatus  # noqa: E402
 from lovable_agent.ingest.kakao_parser import format_for_llm, parse_kakao_file  # noqa: E402
 from lovable_agent.output.kakao_sender import KakaoSender  # noqa: E402
@@ -66,6 +67,11 @@ from lovable_agent.process.claude_cli_client import (  # noqa: E402
     ensure_claude_cli_available,
 )
 from lovable_agent.process.extractor import TaskExtractor  # noqa: E402
+from lovable_agent.process.llm_client import LLMClient  # noqa: E402
+from lovable_agent.process.ollama_client import (  # noqa: E402
+    OllamaClient,
+    is_ollama_reachable,
+)
 from lovable_agent.scheduling.scheduler import ReminderScheduler  # noqa: E402
 from lovable_agent.storage.notion_repo import (  # noqa: E402
     COL_CHATROOM,
@@ -146,10 +152,36 @@ def _patch_task_for_send(
     )
 
 
+def _build_llm(llm_choice: str) -> LLMClient:
+    """--llm 인자에 따라 LLMClient 선택. config.toml [llm] 의 Ollama 옵션을 재사용."""
+    if llm_choice == "ollama":
+        cfg = load_config()
+        if not is_ollama_reachable(cfg.llm.ollama_base_url):
+            raise RuntimeError(
+                f"Ollama 서버 연결 실패 ({cfg.llm.ollama_base_url}). "
+                f"`ollama serve` 또는 Ollama 앱 실행 확인."
+            )
+        log.info(
+            "LLM=Ollama — model=%s, base_url=%s",
+            cfg.llm.ollama_model,
+            cfg.llm.ollama_base_url,
+        )
+        return OllamaClient(
+            model=cfg.llm.ollama_model,
+            base_url=cfg.llm.ollama_base_url,
+            timeout_sec=cfg.llm.ollama_timeout_sec,
+            use_json_format=cfg.llm.ollama_use_json_format,
+        )
+    ensure_claude_cli_available()
+    log.info("LLM=ClaudeCLI")
+    return ClaudeCLIClient()
+
+
 def _run(
     kakao_txt: Path,
     target: str,
     no_send: bool,
+    llm_choice: str,
 ) -> int:
     # ── 1. 환경 점검 ──
     log.info("=" * 70)
@@ -166,7 +198,7 @@ def _run(
         return 2
 
     try:
-        ensure_claude_cli_available()
+        llm = _build_llm(llm_choice)
     except RuntimeError as e:
         log.error("%s", e)
         return 2
@@ -174,7 +206,7 @@ def _run(
     with open(_PROJECT_ROOT / "config.toml", "rb") as f:
         cfg = tomllib.load(f)
     notion_cfg = cfg["notion"]
-    log.info("[0/8] 환경 점검 OK — token, claude CLI, config.toml 모두 정상")
+    log.info("[0/8] 환경 점검 OK — token, LLM(%s), config.toml 정상", llm_choice)
 
     # ── 의존성 와이어링 (실 컴포넌트) ──
     sqlite = SqliteRepository(":memory:")
@@ -184,7 +216,6 @@ def _run(
         whitelist_db_id=notion_cfg["whitelist_db_id"],
         inbox_db_id=notion_cfg["inbox_page_id"],
     )
-    llm = ClaudeCLIClient()
     extractor = TaskExtractor(llm=llm, repo=notion)
     scheduler = ReminderScheduler(notion=notion, sqlite=sqlite)
     notifier = Notifier()
@@ -199,14 +230,19 @@ def _run(
         messages = parse_kakao_file(kakao_txt)
         log.info("[3/8] 카톡 파싱 — %d개 메시지 (%s)", len(messages), kakao_txt.name)
 
-        # ── 4. 실 Claude CLI 추출 ──
+        # ── 4. 실 LLM 추출 ──
         llm_input = format_for_llm(messages)
-        log.info("[4/8] Claude CLI 호출 시작 (입력 %d자, 응답 수초~수분 소요)", len(llm_input))
+        log.info(
+            "[4/8] %s 호출 시작 (입력 %d자, 응답 수초~수분 소요)",
+            llm.__class__.__name__,
+            len(llm_input),
+        )
         t0 = datetime.now()
         outcome = extractor.process_text(llm_input, source_label=kakao_txt.name)
         elapsed = (datetime.now() - t0).total_seconds()
         log.info(
-            "[4/8] Claude CLI 응답 (%.1fs) — 신규 %d / 중복 %d",
+            "[4/8] %s 응답 (%.1fs) — 신규 %d / 중복 %d",
+            llm.__class__.__name__,
             elapsed,
             len(outcome.new_task_ids),
             len(outcome.merged_task_ids),
@@ -340,6 +376,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Step 8 (실 카톡 발송) 건너뜀 — 안전 점검용",
     )
+    parser.add_argument(
+        "--llm",
+        type=str,
+        default="claude_cli",
+        choices=("claude_cli", "ollama"),
+        help="추출에 사용할 LLM 백엔드 (기본: claude_cli)",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -353,7 +396,7 @@ def main(argv: list[str] | None = None) -> int:
         log.error("실 카톡 발송은 Windows 전용. --no-send 로만 실행 가능")
         return 2
 
-    return _run(Path(args.kakao_txt), args.target, args.no_send)
+    return _run(Path(args.kakao_txt), args.target, args.no_send, args.llm)
 
 
 if __name__ == "__main__":

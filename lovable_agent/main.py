@@ -25,6 +25,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import logging
 import logging.handlers
 import os
@@ -32,6 +34,11 @@ import signal
 import sys
 import time
 from pathlib import Path
+
+# Windows cp949 콘솔에서 한국어·유니코드 문자 출력 오류 방지
+with contextlib.suppress(Exception):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
 
 from lovable_agent.config import Config, load_config
 from lovable_agent.domain import WindowSpec
@@ -47,7 +54,9 @@ from lovable_agent.output.steps.type_message import TypeMessageStep
 from lovable_agent.output.steps.verify_chatroom_title import VerifyChatroomTitleStep
 from lovable_agent.process.claude_cli_client import ClaudeCLIClient
 from lovable_agent.process.extractor import TaskExtractor
+from lovable_agent.process.llm_client import LLMClient
 from lovable_agent.process.mock_client import MockLLMClient
+from lovable_agent.process.ollama_client import OllamaClient, is_ollama_reachable
 from lovable_agent.safety.whitelist import WhitelistChecker
 from lovable_agent.scheduling.scheduler import ReminderScheduler
 from lovable_agent.storage.mock_notion_repo import MockNotionRepository
@@ -62,7 +71,9 @@ log = logging.getLogger("lovable_agent")
 # ──────────────────────────────────────────────────────────────
 def _setup_logging(verbose: bool, log_file: Path | None = None) -> None:
     level = logging.DEBUG if verbose else logging.INFO
-    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    # UTF-8 stream 으로 콘솔 핸들러 생성 (cp949 인코딩 오류 방지)
+    console_handler = logging.StreamHandler(sys.stdout)
+    handlers: list[logging.Handler] = [console_handler]
     if log_file is not None:
         log_file.parent.mkdir(parents=True, exist_ok=True)
         # 일자별 회전, 10개 보존
@@ -231,6 +242,39 @@ def _request_stop(signum: int, _frame: object) -> None:
     log.info("종료 신호 수신 (signum=%d). 현재 사이클 완료 후 종료합니다…", signum)
 
 
+def _build_llm_client(config: Config) -> LLMClient:
+    """config.llm.backend 에 따라 LLMClient 구현 선택.
+
+    - "ollama": 사전 reachability 점검 — 서버 꺼져있으면 RuntimeError.
+    - "claude_cli": 로그인된 Claude Code CLI 가정 (PATH 의 `claude` 실행).
+    - "anthropic": 환경변수 ANTHROPIC_API_KEY 필요 (현재 구현 보류 — claude_cli 와 동일 취급).
+    - "mock": 오프라인 디버깅용.
+    """
+    backend = (config.llm.backend or "claude_cli").lower()
+    if backend == "ollama":
+        if not is_ollama_reachable(config.llm.ollama_base_url):
+            raise RuntimeError(
+                f"Ollama 서버에 연결할 수 없습니다 ({config.llm.ollama_base_url}). "
+                f"`ollama serve` 또는 Ollama 앱이 실행 중인지 확인하세요."
+            )
+        log.info(
+            "Ollama 백엔드 — model=%s, base_url=%s",
+            config.llm.ollama_model,
+            config.llm.ollama_base_url,
+        )
+        return OllamaClient(
+            model=config.llm.ollama_model,
+            base_url=config.llm.ollama_base_url,
+            timeout_sec=config.llm.ollama_timeout_sec,
+            use_json_format=config.llm.ollama_use_json_format,
+        )
+    if backend == "mock":
+        log.warning("LLM=mock — 운영 모드에서 mock 백엔드 사용 중. 테스트 목적인지 확인하세요.")
+        return MockLLMClient()
+    # claude_cli (기본) / anthropic — 현재는 둘 다 ClaudeCLIClient 사용
+    return ClaudeCLIClient()
+
+
 def _build_real_kakao_sender() -> KakaoSender:
     """본인 환경 정답 조합 (tab=chats, open=double_click) — 운영 기본값."""
     return KakaoSender(
@@ -273,9 +317,14 @@ def _run_daemon(config: Config) -> int:
     )
     log.info("Notion: 연결 완료 (tasks/whitelist/inbox DB)")
 
-    llm = ClaudeCLIClient()
-    extractor = TaskExtractor(llm=llm, repo=notion)
-    log.info("LLM: ClaudeCLI")
+    llm = _build_llm_client(config)
+    max_chars = config.llm.max_input_chars or None
+    extractor = TaskExtractor(llm=llm, repo=notion, max_input_chars=max_chars)
+    log.info(
+        "LLM: %s%s",
+        llm.__class__.__name__,
+        f" (max_input_chars={max_chars})" if max_chars else "",
+    )
 
     scheduler = ReminderScheduler(
         notion=notion,
@@ -312,7 +361,7 @@ def _run_daemon(config: Config) -> int:
 
             # 1) Inbox 폴링 (느린 주기)
             if now - last_inbox_poll >= notion_poll_interval:
-                _process_inbox_once(notion, extractor)
+                _process_inbox_once(notion, extractor, notifier)
                 last_inbox_poll = now
 
             # 2) Scheduler.tick — 확정 업무 → 발송 큐
@@ -325,8 +374,9 @@ def _run_daemon(config: Config) -> int:
                         tick.enqueued,
                         tick.skipped_too_late,
                     )
-            except Exception:
+            except Exception as e:
                 log.exception("[cycle %d] Scheduler.tick 실패 — 계속 진행", cycle)
+                notifier.error(title="스케줄러 오류", body=f"업무 스케줄링 중 오류 발생: {e}")
 
             # 3) Dispatcher — 발송 큐 처리
             try:
@@ -339,8 +389,9 @@ def _run_daemon(config: Config) -> int:
                         outcome.succeeded,
                         outcome.failed,
                     )
-            except Exception:
+            except Exception as e:
                 log.exception("[cycle %d] Dispatcher 실패 — 계속 진행", cycle)
+                notifier.error(title="발송 처리 오류", body=f"발송 디스패처 실행 중 오류 발생: {e}")
 
             # 4) 다음 사이클 대기 — 중단 시 조기 종료
             for _ in range(reminder_interval):
@@ -355,12 +406,13 @@ def _run_daemon(config: Config) -> int:
     return 0
 
 
-def _process_inbox_once(notion: NotionRepository, extractor: TaskExtractor) -> None:
+def _process_inbox_once(notion: NotionRepository, extractor: TaskExtractor, notifier: Notifier) -> None:
     """Inbox DB 의 미처리 메모들을 한 번에 처리."""
     try:
         memos = notion.fetch_new_inbox_memos()
-    except Exception:
+    except Exception as e:
         log.exception("Inbox 폴링 실패 — 다음 사이클에서 재시도")
+        notifier.error(title="Inbox 폴링 오류", body=f"Notion 메모를 가져오는데 실패했습니다: {e}")
         return
     if not memos:
         return
@@ -375,8 +427,9 @@ def _process_inbox_once(notion: NotionRepository, extractor: TaskExtractor) -> N
                 len(outcome.merged_task_ids),
             )
             notion.mark_inbox_memo_processed(memo_id)
-        except Exception:
+        except Exception as e:
             log.exception("Inbox [%s] 처리 실패 — 다음 사이클에서 재시도", memo_id[:8])
+            notifier.error(title="작업 추출 오류", body=f"메모에서 작업을 추출하는데 실패했습니다: {e}")
 
 
 def main(argv: list[str] | None = None) -> int:

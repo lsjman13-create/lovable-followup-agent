@@ -212,7 +212,13 @@ class NotionRepository:
     # Inbox DB
     # ──────────────────────────────────────────────────────────────
     def fetch_new_inbox_memos(self) -> list[tuple[str, str]]:
-        """Processed=false 인 Inbox 항목 — (page_id, memo_text)."""
+        """Processed=false 인 Inbox 항목 — (page_id, memo_text).
+
+        memo_text 는 Memo title + 페이지 본문 텍스트 블록을 합친 것.
+        - title 만 있으면 → S4 자유 메모 시나리오 (PRD §6.1 FR-1.2)
+        - 본문에 카톡 .txt 를 통째로 붙여넣은 경우 → S1 (PRD §6.1 FR-1.1)
+        파일 첨부 블록(`file`, `pdf`)은 파싱하지 않음 — 텍스트만 본문에 넣어야 함.
+        """
         results = self._client.data_sources.query(
             data_source_id=self._inbox_ds,
             filter={"property": COL_INBOX_PROCESSED, "checkbox": {"equals": False}},
@@ -222,10 +228,40 @@ class NotionRepository:
         out: list[tuple[str, str]] = []
         for page in rows:
             page_id = str(page["id"])
-            memo_text = _extract_title(page.get("properties", {}).get(COL_INBOX_TITLE))
-            if memo_text:
-                out.append((page_id, memo_text))
+            title_text = _extract_title(page.get("properties", {}).get(COL_INBOX_TITLE))
+            body_text = self._fetch_page_body_text(page_id)
+            combined = "\n".join(part for part in (title_text, body_text) if part)
+            if combined.strip():
+                out.append((page_id, combined))
         return out
+
+    def _fetch_page_body_text(self, page_id: str) -> str:
+        """페이지의 자식 블록들에서 모든 텍스트를 추출해 합친다.
+
+        지원: paragraph, heading_1/2/3, bulleted/numbered_list_item, quote,
+              callout, to_do, toggle, code.
+        미지원: file, pdf, image, table 등 비텍스트 블록 — 무시.
+        nested children 은 1단계만 — 깊은 중첩은 일반적이지 않음.
+        """
+        parts: list[str] = []
+        next_cursor: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {"block_id": page_id, "page_size": 100}
+            if next_cursor:
+                kwargs["start_cursor"] = next_cursor
+            try:
+                result = self._client.blocks.children.list(**kwargs)
+            except Exception:
+                log.exception("페이지 본문 블록 조회 실패 — page_id=%s, title만 사용", page_id)
+                return ""
+            for block in result.get("results", []):
+                text = _extract_block_text(block)
+                if text:
+                    parts.append(text)
+            if not result.get("has_more"):
+                break
+            next_cursor = result.get("next_cursor")
+        return "\n".join(parts)
 
     def mark_inbox_memo_processed(self, memo_id: str) -> None:
         self._client.pages.update(
@@ -273,6 +309,37 @@ def _extract_rich_text(prop: dict | None) -> str:
     if not prop:
         return ""
     items = prop.get("rich_text") or []
+    return "".join(
+        item.get("plain_text") or item.get("text", {}).get("content", "") for item in items
+    )
+
+
+# 텍스트를 담는 블록 유형 — rich_text 필드를 직접 갖는 것들
+_TEXT_BLOCK_TYPES = (
+    "paragraph",
+    "heading_1",
+    "heading_2",
+    "heading_3",
+    "bulleted_list_item",
+    "numbered_list_item",
+    "quote",
+    "callout",
+    "to_do",
+    "toggle",
+    "code",
+)
+
+
+def _extract_block_text(block: dict) -> str:
+    """단일 블록의 rich_text 배열에서 plain_text 를 합쳐 반환.
+
+    파일/이미지/표 등 비텍스트 블록은 빈 문자열.
+    """
+    btype = block.get("type")
+    if btype not in _TEXT_BLOCK_TYPES:
+        return ""
+    payload = block.get(btype) or {}
+    items = payload.get("rich_text") or []
     return "".join(
         item.get("plain_text") or item.get("text", {}).get("content", "") for item in items
     )

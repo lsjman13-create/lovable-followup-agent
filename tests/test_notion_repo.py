@@ -61,11 +61,29 @@ class _FakePages:
         return self.retrieve_responses.get(page_id, {"id": page_id, "properties": {}})
 
 
+class _FakeBlockChildren:
+    """blocks.children.list — page_id 별로 시드된 블록 목록 반환."""
+
+    def __init__(self) -> None:
+        self.responses: dict[str, dict] = {}
+        self.list_calls: list[dict] = []
+
+    def list(self, block_id: str, **kwargs: Any) -> dict:
+        self.list_calls.append({"block_id": block_id, **kwargs})
+        return self.responses.get(block_id, {"results": [], "has_more": False})
+
+
+class _FakeBlocks:
+    def __init__(self) -> None:
+        self.children = _FakeBlockChildren()
+
+
 class _FakeClient:
     def __init__(self, query_result: dict | None = None) -> None:
         self.databases = _FakeDatabases()
         self.data_sources = _FakeDataSources(query_result=query_result)
         self.pages = _FakePages()
+        self.blocks = _FakeBlocks()
 
 
 def _make_repo(query_result: dict | None = None) -> tuple[NotionRepository, _FakeClient]:
@@ -285,6 +303,26 @@ def test_is_chatroom_whitelisted_returns_false_when_no_match():
 # ──────────────────────────────────────────────────────────────
 # Inbox
 # ──────────────────────────────────────────────────────────────
+def _paragraph_block(text: str) -> dict:
+    return {
+        "type": "paragraph",
+        "paragraph": {"rich_text": [{"plain_text": text, "text": {"content": text}}]},
+    }
+
+
+def _heading_block(text: str, level: int = 1) -> dict:
+    key = f"heading_{level}"
+    return {
+        "type": key,
+        key: {"rich_text": [{"plain_text": text, "text": {"content": text}}]},
+    }
+
+
+def _file_block() -> dict:
+    """비텍스트 블록 — 무시되어야 함."""
+    return {"type": "file", "file": {"name": "report.pdf"}}
+
+
 def test_fetch_new_inbox_memos_returns_id_and_text():
     query_result = {
         "results": [
@@ -325,6 +363,124 @@ def test_mark_inbox_memo_processed_updates_checkbox():
     call = fake.pages.update_calls[0]
     assert call["page_id"] == "memo_id"
     assert call["properties"]["Processed"]["checkbox"] is True
+
+
+def test_fetch_inbox_memo_includes_page_body_blocks():
+    """Notion 페이지 본문(블록) 텍스트가 title 과 합쳐져 반환되어야 한다 — FR-1.1."""
+    query_result = {
+        "results": [
+            {
+                "id": "memo_with_body",
+                "properties": {
+                    "Memo": {"title": [{"plain_text": "회의 요약"}]},
+                    "Processed": {"checkbox": False},
+                },
+            }
+        ]
+    }
+    repo, fake = _make_repo(query_result=query_result)
+    fake.blocks.children.responses["memo_with_body"] = {
+        "results": [
+            _heading_block("MOP 운영방", level=2),
+            _paragraph_block("[김매니저] [오전 10:30] MOP 8월 운영 보고서 부탁드립니다"),
+            _paragraph_block("[나] [오전 10:31] 5월 27일까지 공유드릴게요"),
+        ],
+        "has_more": False,
+    }
+    memos = repo.fetch_new_inbox_memos()
+    assert len(memos) == 1
+    memo_id, text = memos[0]
+    assert memo_id == "memo_with_body"
+    assert "회의 요약" in text
+    assert "MOP 운영방" in text
+    assert "MOP 8월 운영 보고서" in text
+    assert "5월 27일" in text
+
+
+def test_fetch_inbox_memo_ignores_non_text_blocks():
+    """파일·이미지 같은 비텍스트 블록은 무시되어야 한다 — 미지원 안내용."""
+    query_result = {
+        "results": [
+            {
+                "id": "memo_with_file",
+                "properties": {
+                    "Memo": {"title": [{"plain_text": "첨부"}]},
+                    "Processed": {"checkbox": False},
+                },
+            }
+        ]
+    }
+    repo, fake = _make_repo(query_result=query_result)
+    fake.blocks.children.responses["memo_with_file"] = {
+        "results": [_file_block(), _paragraph_block("진짜 메모")],
+        "has_more": False,
+    }
+    memos = repo.fetch_new_inbox_memos()
+    assert memos == [("memo_with_file", "첨부\n진짜 메모")]
+
+
+def test_fetch_inbox_memo_handles_blocks_pagination():
+    """has_more=true 면 next_cursor 로 다음 페이지 가져와야 한다."""
+    query_result = {
+        "results": [
+            {
+                "id": "memo_long",
+                "properties": {
+                    "Memo": {"title": []},
+                    "Processed": {"checkbox": False},
+                },
+            }
+        ]
+    }
+    repo, fake = _make_repo(query_result=query_result)
+    # 첫 호출: 1개 블록 + has_more, 두 번째 호출: 1개 + 종료
+    responses = [
+        {"results": [_paragraph_block("part 1")], "has_more": True, "next_cursor": "c2"},
+        {"results": [_paragraph_block("part 2")], "has_more": False},
+    ]
+    call_count = {"n": 0}
+
+    def fake_list(block_id: str, **kwargs):  # noqa: ARG001
+        i = call_count["n"]
+        call_count["n"] += 1
+        return responses[i]
+
+    fake.blocks.children.list = fake_list  # type: ignore[assignment]
+    memos = repo.fetch_new_inbox_memos()
+    assert memos == [("memo_long", "part 1\npart 2")]
+
+
+def test_fetch_inbox_memo_survives_blocks_api_error():
+    """blocks.children.list 가 예외 던져도 title 만으로 동작해야 한다."""
+    query_result = {
+        "results": [
+            {
+                "id": "memo_err",
+                "properties": {
+                    "Memo": {"title": [{"plain_text": "title 만"}]},
+                    "Processed": {"checkbox": False},
+                },
+            }
+        ]
+    }
+    repo, fake = _make_repo(query_result=query_result)
+
+    def boom(block_id: str, **kwargs):  # noqa: ARG001
+        raise RuntimeError("Notion API 일시 장애")
+
+    fake.blocks.children.list = boom  # type: ignore[assignment]
+    memos = repo.fetch_new_inbox_memos()
+    assert memos == [("memo_err", "title 만")]
+
+
+def test_extract_block_text_extracts_supported_types():
+    """헬퍼 자체 단위 테스트 — 지원 블록 유형들."""
+    from lovable_agent.storage.notion_repo import _extract_block_text
+
+    assert _extract_block_text(_paragraph_block("hello")) == "hello"
+    assert _extract_block_text(_heading_block("title", level=3)) == "title"
+    assert _extract_block_text(_file_block()) == ""
+    assert _extract_block_text({"type": "image", "image": {}}) == ""
 
 
 # ──────────────────────────────────────────────────────────────

@@ -12,6 +12,20 @@ api_key_env = "ANTHROPIC_API_KEY"
 model = "claude-sonnet-4-6"
 fallback_model = "claude-opus-4-7"
 
+[llm]
+# 어느 LLM 으로 카톡 텍스트를 분석할지 선택.
+# - "claude_cli": Claude Code CLI (외부 전송, 무료 — 가입 플랜 한도 내)
+# - "ollama":     로컬 Ollama (PII 외부 유출 0, 모델 사전 pull 필요)
+# - "anthropic":  Anthropic API 직접 호출 (api_key_env 필요, 유료)
+# - "mock":       오프라인 테스트만 (운영 금지)
+backend = "claude_cli"
+ollama_model = "exaone3.5:7.8b"   # 또는 "llama3:latest", "qwen2.5:7b" 등
+ollama_base_url = "http://localhost:11434"
+ollama_timeout_sec = 300.0
+ollama_use_json_format = true
+# 입력 절단 — CPU Ollama 가 너무 큰 입력에서 타임아웃 나는 것 방지. 0=무제한.
+max_input_chars = 0
+
 [notion]
 api_token_env = "NOTION_API_TOKEN"
 tasks_db_id = ""        # Phase 4 에서 채움

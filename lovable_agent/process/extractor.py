@@ -34,9 +34,24 @@ class ExtractionOutcome:
 class TaskExtractor:
     """LLMClient + NotionRepository 를 묶은 오케스트레이션."""
 
-    def __init__(self, llm: LLMClient, repo: NotionRepository) -> None:
+    def __init__(
+        self,
+        llm: LLMClient,
+        repo: NotionRepository,
+        max_input_chars: int | None = None,
+    ) -> None:
+        """
+        Args:
+            llm: LLMClient 구현.
+            repo: NotionRepository 구현.
+            max_input_chars: 입력 텍스트 글자 수 상한. 초과 시 마지막 줄바꿈 기준으로
+                절단하고 경고 로그를 남긴다. None 이면 무제한.
+                CPU 기반 로컬 LLM(Ollama)에서 큰 입력을 받았을 때 타임아웃 방지용.
+                품질-속도 trade-off: 절단되면 끝부분 메시지는 무시됨.
+        """
         self._llm = llm
         self._repo = repo
+        self._max_input_chars = max_input_chars
 
     def process_text(self, text: str, source_label: str = "") -> ExtractionOutcome:
         """비정형 텍스트 → 노션 업무로 동기화.
@@ -51,6 +66,21 @@ class TaskExtractor:
         if not text.strip():
             log.info("Extractor — 빈 텍스트, 스킵")
             return ExtractionOutcome([], [], 0)
+
+        original_len = len(text)
+        if self._max_input_chars is not None and original_len > self._max_input_chars:
+            cutoff = text.rfind("\n", 0, self._max_input_chars)
+            if cutoff <= 0:
+                cutoff = self._max_input_chars
+            text = text[:cutoff]
+            log.warning(
+                "Extractor — 입력 %d자 > 상한 %d자, 절단 후 %d자로 처리 (출처: %s). "
+                "끝부분 메시지는 이번 사이클에서 누락됨.",
+                original_len,
+                self._max_input_chars,
+                len(text),
+                source_label or "?",
+            )
 
         existing = self._repo.list_active_tasks()
         log.info(
